@@ -60,14 +60,13 @@ Set these in Workers → Settings → Variables and Secrets. `keep_vars` keeps t
 
 ### The first values for hookstreak.com
 
-To open sign-ups you need only these; AI, Stripe and the networks can follow.
+`SITE_URL` (`https://hookstreak.com`) and `CONTACT_EMAIL` (`hello@hookstreak.com`, also the sender) are set in
+`wrangler.jsonc`. To open sign-ups, add these in the dashboard; AI, Stripe and the networks can follow.
 
 | Name | Value |
 | --- | --- |
-| `SITE_URL` | `https://hookstreak.com` |
-| `CONTACT_EMAIL` | `hello@hookstreak.com` (also the sender) |
 | `COMPANY_NAME`, `COMPANY_ADDRESS` | Your legal entity and address, as they should appear on the legal pages |
-| `ADMIN_EMAILS` | The address you sign up with |
+| `ADMIN_EMAILS` | The address you sign up with (dashboard only: the repository is public) |
 | `TRIAL_HASH_SECRET`, `TOKEN_ENCRYPTION_KEY` | Secrets: each the output of `openssl rand -base64 32` |
 | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | From a Turnstile widget for `hookstreak.com` |
 | `REGISTRATION_ENABLED` | `true`, last |

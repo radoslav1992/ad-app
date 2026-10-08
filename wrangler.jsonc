@@ -6,6 +6,12 @@
   "compatibility_flags": ["nodejs_compat"],
   // Dashboard variables and secrets survive GitHub deploys.
   "keep_vars": true,
+  // Public settings tied to the domain, set on every deploy (a dashboard value for these names is replaced).
+  // Switches, secrets and anything private (ADMIN_EMAILS) stay in the dashboard: this repository is public.
+  "vars": {
+    "SITE_URL": "https://hookstreak.com",
+    "CONTACT_EMAIL": "hello@hookstreak.com",
+  },
   // hookstreak.com is the public address; the others redirect there (canonicalUrl in server/config.ts).
   "routes": [
     { "pattern": "hookstreak.com", "custom_domain": true },
