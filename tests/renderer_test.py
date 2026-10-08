@@ -492,8 +492,10 @@ class UnitTest(unittest.TestCase):
                                   '-vf',server.burn(str(path)),'-frames:v','1','-f','null','-'], capture_output=True, text=True).stderr
             for font in ('NotoSans-Bold.ttf', 'NotoSans-Regular.ttf', 'NotoSerif-Italic.ttf'):
                 self.assertIn(f"Loading font file '{os.path.join(server.FONTS_DIR, font)}'", out)
-            self.assertIn('fontselect: (Noto Sans, 700, 0) -> NotoSans-Bold', out)
-            self.assertIn('fontselect: (Noto Serif, 400, 100) -> NotoSerif-Italic', out)
+            # The face, not the copy: where fonts-noto-core is installed (CI, the container) libass may pick its
+            # system file, which is the same Noto release as the bundled one.
+            self.assertRegex(out, r'fontselect: \(Noto Sans, 700, 0\) -> [^\n]*, 0, NotoSans-Bold\n')
+            self.assertRegex(out, r'fontselect: \(Noto Serif, 400, 100\) -> [^\n]*, 0, NotoSerif-Italic\n')
         with self.assertRaises(ValueError): server.burn('/tmp/x:fontsdir=/etc/captions.ass')
 
     def test_cancel_stops_the_running_command(self):
