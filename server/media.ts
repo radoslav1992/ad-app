@@ -1,0 +1,182 @@
+import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
+import { z } from "zod";
+import type { App, Env } from "./types";
+import { MB, now, uid } from "./types";
+import { dbFailure, json } from "./db";
+import { rate, safeEqual, token } from "./security";
+import { extOf, head, imageFits, imageInfo, mediaKey, serveObject } from "./storage";
+
+// The media library: uploads (images, videos, audio) in authenticated 8 MiB parts, website images and everything
+// generated for posts. Videos and audio are checked by the renderer (length, size, sound) before they can be used.
+export const media = new Hono<App>();
+export const PART_SIZE = 8 * MB;
+const accepted: Record<string, { kind: "image" | "video" | "audio"; max: number }> = {
+  "image/jpeg": { kind: "image", max: 20 * MB },
+  "image/png": { kind: "image", max: 20 * MB },
+  "image/webp": { kind: "image", max: 20 * MB },
+  "video/mp4": { kind: "video", max: 500 * MB },
+  "video/quicktime": { kind: "video", max: 500 * MB },
+  "video/webm": { kind: "video", max: 500 * MB },
+  "audio/mpeg": { kind: "audio", max: 50 * MB },
+  "audio/wav": { kind: "audio", max: 50 * MB },
+  "audio/x-wav": { kind: "audio", max: 50 * MB },
+  "audio/mp4": { kind: "audio", max: 50 * MB },
+  "audio/x-m4a": { kind: "audio", max: 50 * MB },
+  "audio/aac": { kind: "audio", max: 50 * MB },
+  "audio/ogg": { kind: "audio", max: 50 * MB },
+};
+export function assetView(a: any) {
+  const meta = json<any>(a.meta, {});
+  return {
+    id: a.id, kind: a.kind, name: a.name, mime: a.mime, bytes: a.bytes, duration: a.duration, width: a.width, height: a.height,
+    status: a.status, workspaceId: a.workspace_id, hasAudio: meta.hasAudio ?? null, error: a.status === "failed" ? meta.error || "This file can't be used." : null,
+    createdAt: a.created_at, url: `/api/media/${a.id}/file`,
+  };
+}
+async function ownedAsset(env: Env, userId: string, id: string) {
+  const a = await env.DB.prepare("SELECT * FROM media_assets WHERE id=? AND user_id=?").bind(id, userId).first<any>();
+  if (!a) throw new HTTPException(404, { message: "File not found." });
+  return a;
+}
+
+media.get("/", async (c) => {
+  const user = c.get("user");
+  const q = z.object({
+    workspace: z.uuid().optional(),
+    type: z.enum(["image", "video", "audio"]).optional(),
+    source: z.enum(["library", "generated", "all"]).default("library"),
+    limit: z.coerce.number().int().min(1).max(200).default(100),
+  }).parse(c.req.query());
+  const where = ["user_id=?"], args: unknown[] = [user.id];
+  if (q.workspace) { where.push("(workspace_id=? OR workspace_id IS NULL)"); args.push(q.workspace); }
+  if (q.type) { where.push("mime LIKE ?"); args.push(`${q.type}/%`); }
+  // The library is what people can reuse: uploads, website images and stand-alone AI images; generated post files
+  // (renders, voices, avatar videos) belong to their posts.
+  if (q.source === "library") where.push("post_id IS NULL AND kind IN ('upload','brand','ai_image','ai_clip','portrait')");
+  if (q.source === "generated") where.push("post_id IS NOT NULL");
+  where.push("status<>'uploading'");
+  const rows = (await c.env.DB.prepare(`SELECT * FROM media_assets WHERE ${where.join(" AND ")} ORDER BY created_at DESC LIMIT ?`).bind(...args, q.limit).all<any>()).results;
+  const usage = await c.env.DB.prepare("SELECT COALESCE(SUM(bytes),0) AS used,(SELECT max_bytes FROM media_limits WHERE user_id=?) AS max FROM media_assets WHERE user_id=?")
+    .bind(user.id, user.id).first<{ used: number; max: number | null }>();
+  return c.json({ assets: rows.map(assetView), storage: { used: usage?.used || 0, max: usage?.max || 0 } });
+});
+media.post("/uploads", async (c) => {
+  const user = c.get("user");
+  await rate(c, "upload", 200, 3600, user.id);
+  const d = z.object({
+    name: z.string().trim().min(1).max(160),
+    mime: z.string().max(80),
+    bytes: z.number().int().min(24),
+    workspaceId: z.uuid().optional(),
+  }).parse(await c.req.json());
+  const type = accepted[d.mime.toLowerCase()];
+  if (!type) throw new HTTPException(415, { message: "Upload a JPG, PNG or WebP image, an MP4, MOV or WebM video, or an MP3, WAV, M4A or OGG track." });
+  if (d.bytes > type.max) throw new HTTPException(413, { message: `${type.kind === "image" ? "Images" : type.kind === "video" ? "Videos" : "Tracks"} can be up to ${type.max / MB} MB.` });
+  if (d.workspaceId && !(await c.env.DB.prepare("SELECT 1 FROM workspaces WHERE id=? AND user_id=?").bind(d.workspaceId, user.id).first()))
+    throw new HTTPException(404, { message: "Workspace not found." });
+  const id = uid(), key = mediaKey(user.id, id, extOf(d.mime.toLowerCase()));
+  // The full size is reserved now, so many parallel uploads cannot overfill the storage.
+  try {
+    await c.env.DB.prepare(
+      "INSERT INTO media_assets(id,user_id,workspace_id,kind,name,object_key,mime,bytes,status,meta,created_at,updated_at) VALUES (?,?,?,'upload',?,?,?,?,'uploading',?,?,?)",
+    ).bind(id, user.id, d.workspaceId || null, d.name, key, d.mime.toLowerCase(), d.bytes, JSON.stringify({ token: token() }), now(), now()).run();
+  } catch (e) {
+    dbFailure(e);
+  }
+  const upload = await c.env.MEDIA.createMultipartUpload(key, { httpMetadata: { contentType: d.mime.toLowerCase() } });
+  await c.env.DB.prepare("UPDATE media_assets SET upload_id=? WHERE id=?").bind(upload.uploadId, id).run();
+  return c.json({ id, partSize: PART_SIZE, parts: Math.ceil(d.bytes / PART_SIZE) }, 201);
+});
+media.put("/uploads/:id/parts/:part", async (c) => {
+  const user = c.get("user");
+  const a = await ownedAsset(c.env, user.id, c.req.param("id"));
+  if (a.status !== "uploading" || !a.upload_id) throw new HTTPException(409, { message: "This upload has finished or expired. Start it again." });
+  const part = Number(c.req.param("part")), parts = Math.ceil(a.bytes / PART_SIZE);
+  if (!Number.isInteger(part) || part < 1 || part > parts) throw new HTTPException(400, { message: "Invalid upload part." });
+  const body = new Uint8Array(await c.req.arrayBuffer());
+  const expected = part < parts ? PART_SIZE : a.bytes - PART_SIZE * (parts - 1);
+  if (body.length !== expected) throw new HTTPException(400, { message: "The upload part has the wrong size. Try the upload again." });
+  const uploaded = await c.env.MEDIA.resumeMultipartUpload(a.object_key, a.upload_id).uploadPart(part, body);
+  await c.env.DB.prepare("INSERT INTO media_parts(asset_id,part,etag,bytes) VALUES (?,?,?,?) ON CONFLICT(asset_id,part) DO UPDATE SET etag=excluded.etag,bytes=excluded.bytes")
+    .bind(a.id, part, uploaded.etag, body.length).run();
+  return c.json({ ok: true });
+});
+media.post("/uploads/:id/complete", async (c) => {
+  const user = c.get("user");
+  const a = await ownedAsset(c.env, user.id, c.req.param("id"));
+  if (a.status !== "uploading") return c.json({ asset: assetView(a) });
+  const parts = (await c.env.DB.prepare("SELECT part,etag,bytes FROM media_parts WHERE asset_id=? ORDER BY part").bind(a.id).all<any>()).results;
+  const expected = Math.ceil(a.bytes / PART_SIZE);
+  if (parts.length !== expected || parts.reduce((n, p) => n + p.bytes, 0) !== a.bytes)
+    throw new HTTPException(409, { message: "Some parts of the upload are missing. Try the upload again." });
+  await c.env.MEDIA.resumeMultipartUpload(a.object_key, a.upload_id).complete(parts.map((p) => ({ partNumber: p.part, etag: p.etag })));
+  await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM media_parts WHERE asset_id=?").bind(a.id),
+    c.env.DB.prepare("UPDATE media_assets SET status='checking',upload_id=NULL,updated_at=? WHERE id=?").bind(now(), a.id),
+  ]);
+  if (a.mime.startsWith("image/")) {
+    // Images are checked from their header here: type, size and pixel dimensions.
+    const info = imageInfo((await head(c.env, a.object_key)) || new Uint8Array());
+    if (!info || !imageFits(info) || info.mime !== (a.mime === "image/jpg" ? "image/jpeg" : a.mime)) {
+      await failAsset(c.env, a.id, info && !imageFits(info) ? "Images can be up to 4096 × 4096 pixels." : "This isn't a readable JPG, PNG or WebP image.");
+    } else {
+      await c.env.DB.prepare("UPDATE media_assets SET status='ready',width=?,height=?,updated_at=? WHERE id=?").bind(info.width, info.height, now(), a.id).run();
+    }
+  } else if (c.env.CONTENT) {
+    try {
+      await c.env.CONTENT.create({ id: `inspect-${a.id}`, params: { inspectId: a.id } });
+    } catch {
+      await failAsset(c.env, a.id, "The file couldn't be checked. Try uploading it again.");
+    }
+  } else {
+    await failAsset(c.env, a.id, "Video and audio uploads are being set up. Please try again soon.");
+  }
+  return c.json({ asset: assetView(await ownedAsset(c.env, user.id, a.id)) });
+});
+/** Marks an upload unusable; its storage reservation is released (the file itself is deleted by maintenance). */
+export async function failAsset(env: Env, id: string, error: string) {
+  const a = await env.DB.prepare("SELECT meta FROM media_assets WHERE id=?").bind(id).first<{ meta: string }>();
+  await env.DB.prepare("UPDATE media_assets SET status='failed',bytes=0,meta=?,updated_at=? WHERE id=?")
+    .bind(JSON.stringify({ ...json<any>(a?.meta, {}), error, token: undefined }), now(), id).run();
+}
+media.get("/:id", async (c) => c.json({ asset: assetView(await ownedAsset(c.env, c.get("user").id, c.req.param("id"))) }));
+media.get("/:id/file", async (c) => {
+  const a = await ownedAsset(c.env, c.get("user").id, c.req.param("id"));
+  if (a.status === "uploading" || a.status === "failed") throw new HTTPException(404, { message: "This file isn't available." });
+  const response = await serveObject(c.env, a.object_key, c.req.header("Range"));
+  if (c.req.query("download") === "1")
+    response.headers.set("Content-Disposition", `attachment; filename="${a.name.replace(/[^\w.\- ]+/g, "_").slice(0, 80) || "file"}.${extOf(a.mime)}"`);
+  return response;
+});
+media.patch("/:id", async (c) => {
+  const a = await ownedAsset(c.env, c.get("user").id, c.req.param("id"));
+  const d = z.object({ name: z.string().trim().min(1).max(160) }).parse(await c.req.json());
+  await c.env.DB.prepare("UPDATE media_assets SET name=?,updated_at=? WHERE id=?").bind(d.name, now(), a.id).run();
+  return c.json({ ok: true });
+});
+media.delete("/:id", async (c) => {
+  const user = c.get("user");
+  const a = await ownedAsset(c.env, user.id, c.req.param("id"));
+  if (a.post_id) throw new HTTPException(409, { message: "This file belongs to a post. Delete the post instead." });
+  // A file a post is being made from right now stays until that run finishes.
+  const busy = await c.env.DB.prepare("SELECT 1 FROM runs r JOIN posts p ON p.id=r.post_id WHERE r.user_id=? AND r.status IN ('queued','running') AND p.spec LIKE ? LIMIT 1")
+    .bind(user.id, `%${a.id}%`).first();
+  if (busy) throw new HTTPException(409, { message: "A post is being made with this file. Try again when it's ready." });
+  if (a.upload_id) await c.env.MEDIA.resumeMultipartUpload(a.object_key, a.upload_id).abort().catch(() => {});
+  await c.env.DB.batch([
+    c.env.DB.prepare("UPDATE workspaces SET logo_asset=NULL WHERE logo_asset=? AND user_id=?").bind(a.id, user.id),
+    c.env.DB.prepare("DELETE FROM media_assets WHERE id=?").bind(a.id),
+  ]);
+  return c.json({ ok: true });
+});
+
+/** The renderer reads an upload it is checking through a capability link (token in the URL, while checking). */
+export const uploadInputs = new Hono<{ Bindings: Env }>();
+uploadInputs.get("/:id", async (c) => {
+  const a = await c.env.DB.prepare("SELECT object_key,meta,status FROM media_assets WHERE id=?").bind(c.req.param("id")).first<any>();
+  const meta = json<any>(a?.meta, {});
+  if (!a || a.status !== "checking" || typeof meta.token !== "string" || !safeEqual(meta.token, c.req.query("token") || ""))
+    throw new HTTPException(404, { message: "Not found." });
+  return serveObject(c.env, a.object_key, c.req.header("Range"), "no-store");
+});

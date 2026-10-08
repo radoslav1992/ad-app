@@ -1,0 +1,41 @@
+# Copy to .dev.vars for LOCAL DEVELOPMENT ONLY. Never commit .dev.vars.
+APP_ENV=development
+SITE_URL=http://localhost:8787
+REGISTRATION_ENABLED=true
+BILLING_ENABLED=false
+# Operator details shown on the legal pages.
+COMPANY_NAME=
+COMPANY_ADDRESS=
+CONTACT_EMAIL=
+ADMIN_EMAILS=
+EMAIL_FROM=
+TURNSTILE_SITE_KEY=
+TURNSTILE_SECRET_KEY=
+# Secret for hashing trial identifiers (any long random string).
+TRIAL_HASH_SECRET=
+
+# Stripe (USD monthly prices, see docs/DEPLOYMENT.md).
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+STRIPE_PRICE_STARTER=
+STRIPE_PRICE_GROWTH=
+STRIPE_PRICE_PRO=
+
+# AI providers. Text (scripts, brand profiles) runs on the Workers AI binding.
+TEXT_MODEL=
+FAL_KEY=
+ELEVENLABS_API_KEY=
+HEYGEN_API_KEY=
+# Turns on rendering (needs the renderer container) and AI generation.
+MEDIA_ENABLED=false
+
+# Social publishing. 32 random bytes, base64: encrypts OAuth tokens at rest.
+TOKEN_ENCRYPTION_KEY=
+TIKTOK_CLIENT_KEY=
+TIKTOK_CLIENT_SECRET=
+INSTAGRAM_APP_ID=
+INSTAGRAM_APP_SECRET=
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+LINKEDIN_CLIENT_ID=
+LINKEDIN_CLIENT_SECRET=
