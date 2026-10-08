@@ -21,8 +21,7 @@
     {
       "binding": "DB",
       "database_name": "ad-app",
-      // Replace with the ID printed by `npx wrangler d1 create ad-app` (see docs/DEPLOYMENT.md).
-      "database_id": "00000000-0000-4000-8000-000000000000",
+      "database_id": "f6a24d29-a0cd-4ee8-a1f0-44c850d7e3e3",
       "migrations_dir": "migrations",
     },
   ],

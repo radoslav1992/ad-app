@@ -6,9 +6,17 @@ Workers Builds works the same way as for rech-bg: the build runs `npm ci && npm 
 
 ## 1. Cloudflare resources
 
+`wrangler.jsonc` already points at the production database `ad-app` and the bucket `ad-app-media`. On a new Cloudflare
+account, create them first and put the new database ID into `wrangler.jsonc`:
+
 ```sh
 npx wrangler d1 create ad-app            # put the printed database_id into wrangler.jsonc
 npx wrangler r2 bucket create ad-app-media
+```
+
+Then apply the schema (once, and again whenever a new file lands in `migrations/`):
+
+```sh
 npm run db:remote                        # applies migrations/0001_initial.sql
 ```
 
