@@ -280,3 +280,12 @@ describe("the post writer and a large library", () => {
     expect(picked.characters[0]).toMatchObject({ id: oldest, name: "Oldest", ref: "char1" });
   });
 });
+
+describe("one library creator per look", () => {
+  it("refuses a second library creator for the same look, but not a person's own", () => {
+    const { sqlite, user } = setup();
+    creator(sqlite, { lookId: "look_same" });
+    expect(() => creator(sqlite, { lookId: "look_same" })).toThrow(/UNIQUE/);
+    expect(() => creator(sqlite, { lookId: "look_same", userId: user.id })).not.toThrow();
+  });
+});

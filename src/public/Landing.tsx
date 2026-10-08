@@ -276,7 +276,7 @@ export function Landing() {
 
   return (
     <>
-      <section className="wrap hero" aria-labelledby="hero-title">
+      <section className="pub-wrap hero" aria-labelledby="hero-title">
         <div>
           <span className="eyebrow"><Sparkles size={14} aria-hidden="true" /> {PRODUCT.tagline}</span>
           <h1 id="hero-title">Never break your <em>posting streak</em></h1>
@@ -287,7 +287,7 @@ export function Landing() {
       </section>
 
       <section className="pub-section" id="how-it-works" aria-labelledby="how-title" tabIndex={-1}>
-        <div className="wrap">
+        <div className="pub-wrap">
           <div className="pub-section-head center">
             <span className="kicker">How it works</span>
             <h2 className="title" id="how-title">From link to schedule in three steps</h2>
@@ -308,7 +308,7 @@ export function Landing() {
       </section>
 
       <section className="pub-section" id="features" aria-labelledby="formats-title" tabIndex={-1}>
-        <div className="wrap">
+        <div className="pub-wrap">
           <div className="pub-section-head center">
             <span className="kicker">Five formats</span>
             <h2 className="title" id="formats-title">The formats that work on short-form, made for you</h2>
@@ -319,7 +319,7 @@ export function Landing() {
       </section>
 
       <section className="pub-section" aria-labelledby="blitz-title">
-        <div className="wrap split">
+        <div className="pub-wrap split">
           <div className="copy">
             <span className="kicker">Blitz</span>
             <h2 className="title" id="blitz-title">Approve posts with a swipe</h2>
@@ -359,7 +359,7 @@ export function Landing() {
       </section>
 
       <section className="pub-section" aria-labelledby="more-title">
-        <div className="wrap">
+        <div className="pub-wrap">
           <div className="pub-section-head center">
             <span className="kicker">Everything around the posts</span>
             <h2 className="title" id="more-title">Set it up once. Keep posting.</h2>
@@ -428,7 +428,7 @@ export function Landing() {
       </section>
 
       <section className="pub-section" aria-labelledby="plans-title">
-        <div className="wrap">
+        <div className="pub-wrap">
           <div className="pub-section-head center">
             <span className="kicker">Pricing</span>
             <h2 className="title" id="plans-title">Start free. Upgrade when it works for you.</h2>
@@ -453,7 +453,7 @@ export function Landing() {
       </section>
 
       <section className="pub-section" id="faq" aria-labelledby="faq-title" tabIndex={-1}>
-        <div className="wrap">
+        <div className="pub-wrap">
           <div className="pub-section-head center">
             <span className="kicker">FAQ</span>
             <h2 className="title" id="faq-title">Questions, answered</h2>
@@ -473,7 +473,7 @@ export function Landing() {
       </section>
 
       <section className="pub-section" aria-labelledby="cta-title">
-        <div className="wrap">
+        <div className="pub-wrap">
           <div className="gradient-border cta-band">
             <div>
               <h2 id="cta-title">Your next month of posts starts with one link</h2>

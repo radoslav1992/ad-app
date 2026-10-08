@@ -4,8 +4,8 @@
 /* Shell */
 .stage.public, .stage.auth-page { overflow-x: clip; display: flex; flex-direction: column; }
 .stage.public > main, .stage.auth-page > main { flex: 1; }
-.wrap { width: min(1160px, 100% - 32px); margin-inline: auto; }
-.wrap.narrow { width: min(860px, 100% - 32px); }
+.pub-wrap { width: min(1160px, 100% - 32px); margin-inline: auto; }
+.pub-wrap.narrow { width: min(860px, 100% - 32px); }
 .stage > .skip-link { position: absolute; left: 16px; top: -80px; z-index: 100; background: #fff; color: #111; padding: 10px 16px; border-radius: 12px; font-weight: 600; text-decoration: none; }
 .stage > .skip-link:focus { top: 12px; }
 .public :focus-visible, .auth-page :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }

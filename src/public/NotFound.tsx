@@ -7,7 +7,7 @@ import "./public.css";
 export function NotFound() {
   const { user } = useAuth();
   return (
-    <div className="wrap status-page">
+    <div className="pub-wrap status-page">
       <div>
         <p className="big-code" aria-hidden="true">404</p>
         <h1>This page doesn't exist</h1>

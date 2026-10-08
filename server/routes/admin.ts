@@ -154,6 +154,8 @@ async function importLook(env: Env, lookId: string, d: { name?: string; descript
   } catch (e) {
     // Nothing points at the copy yet (a partial upload is aborted by storeStream itself).
     await env.MEDIA.delete(key).catch(() => {});
+    // Another import of the same look won the race (unique index on library looks).
+    if (e instanceof Error && /UNIQUE constraint failed: characters\.look_id/.test(e.message)) throw new HTTPException(409, { message: "This look is already in the library." });
     throw e;
   }
   return { id, name };

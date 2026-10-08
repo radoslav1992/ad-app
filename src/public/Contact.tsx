@@ -65,7 +65,7 @@ export function Contact() {
   };
 
   return (
-    <div className="wrap">
+    <div className="pub-wrap">
       <header className="pub-head">
         <span className="kicker">Contact</span>
         <h1>Get in touch</h1>
