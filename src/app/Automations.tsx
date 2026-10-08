@@ -36,7 +36,7 @@ export function Automations() {
       <div className="grid two">
         <section className="card stack">
           <div className="row between">
-            <div className="row"><span className="logo-mark" style={{ background: "var(--violet)" }}><Zap size={18} /></span><h2>Daily posts</h2></div>
+            <div className="row"><span className="logo-mark" style={{ background: "var(--violet)", color: "#fff" }}><Zap size={18} /></span><h2>Daily posts</h2></div>
             <Switch checked={a.enabled} onChange={(v) => void save({ ...settings, automation: { ...a, enabled: v } })} label="Daily posts" />
           </div>
           <p className="muted">Every day we write and render new posts for you to review in Blitz — only while fewer than {a.postsPerDay * 2} are still waiting, so nothing piles up.</p>

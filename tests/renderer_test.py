@@ -180,10 +180,10 @@ class RendererTest(unittest.TestCase):
         """The AI marking: MP4 comment/description tags and XMP with the IPTC digital source type, as ffprobe reads
         them, the XMP box last; the file still decodes without errors."""
         tags = ffprobe(path, '-export_xmp', '1')['format']['tags']
-        self.assertEqual(tags.get('comment'), 'AI-generated (synthetic media) - Postloop')
+        self.assertEqual(tags.get('comment'), 'AI-generated (synthetic media) - Hookstreak')
         self.assertIn(AI_SOURCE_TYPE, tags.get('description', ''))
         self.assertIn(f'Iptc4xmpExt:DigitalSourceType="{AI_SOURCE_TYPE}"', tags.get('xmp', ''))
-        self.assertIn('xmp:CreatorTool="Postloop"', tags.get('xmp', ''))
+        self.assertIn('xmp:CreatorTool="Hookstreak"', tags.get('xmp', ''))
         self.assert_decodes(path)
         self.assertTrue(Path(path).read_bytes().endswith(server.AI_XMP.encode('utf-8')), 'XMP box is the last top-level box')
 

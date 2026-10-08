@@ -6,8 +6,13 @@
   "compatibility_flags": ["nodejs_compat"],
   // Dashboard variables and secrets survive GitHub deploys.
   "keep_vars": true,
-  // Add your production domain here once it is on Cloudflare, e.g.
-  // "routes": [{ "pattern": "example.com", "custom_domain": true }],
+  // hookstreak.com is the public address; the others redirect there (canonicalUrl in server/config.ts).
+  "routes": [
+    { "pattern": "hookstreak.com", "custom_domain": true },
+    { "pattern": "www.hookstreak.com", "custom_domain": true },
+    { "pattern": "hookstreak.app", "custom_domain": true },
+    { "pattern": "www.hookstreak.app", "custom_domain": true },
+  ],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
@@ -16,7 +21,7 @@
   },
   "ai": { "binding": "AI" },
   // Cloudflare Email Sending: add "allowed_sender_addresses": ["hello@your-domain"] when the domain is verified.
-  "send_email": [{ "name": "EMAIL" }],
+  "send_email": [{ "name": "EMAIL", "allowed_sender_addresses": ["hello@hookstreak.com"] }],
   "d1_databases": [
     {
       "binding": "DB",

@@ -222,7 +222,7 @@ function Welcome({ name, ws, busy, onDone }: { name: string; ws: Workspace | nul
             <label className="field"><span className="label"><Building2 size={20} /> Company name</span><input className="input big" value={company} onChange={(e) => setCompany(e.target.value)} maxLength={80} required autoComplete="organization" /></label>
           </div>
         </div>
-        <div className="gradient-border" style={{ margin: "30px 0 26px", background: "linear-gradient(90deg,#7c5cff,#e5484d,#f5b21b,#16a34a,#f26b1d)" }}>
+        <div className="gradient-border" style={{ margin: "30px 0 26px", background: "linear-gradient(90deg,#7c5cff,#2dd4bf,#b8f53a)" }}>
           <div style={{ fontWeight: 500 }}>Have multiple businesses? You can add more workspaces later in <strong>Settings › Workspaces</strong>.</div>
         </div>
         <button className="btn primary big block" disabled={busy || uploading || !person.trim() || !company.trim()}>{busy ? <span className="spinner" /> : "Continue"}</button>

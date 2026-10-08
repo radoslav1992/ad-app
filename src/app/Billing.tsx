@@ -169,7 +169,7 @@ export function BillingPage() {
                 className={`card plan-card${current ? " current" : ""}${p.id === "growth" ? " popular" : ""}${p.id === highlight ? " wanted" : ""}`}>
                 <div className="row between">
                   <h3 id={`plan-${p.id}`} style={{ fontSize: 20 }}>{p.name}</h3>
-                  {current ? <span className="chip green">Your plan</span> : p.id === highlight ? <span className="chip violet">Your pick</span> : p.id === "growth" ? <span className="chip orange">Most popular</span> : null}
+                  {current ? <span className="chip green">Your plan</span> : p.id === highlight ? <span className="chip violet">Your pick</span> : p.id === "growth" ? <span className="chip brand">Most popular</span> : null}
                 </div>
                 <div className="plan-price">${p.price}<small> /month</small></div>
                 <p className="muted small">{p.description}</p>

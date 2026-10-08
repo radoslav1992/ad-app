@@ -103,7 +103,7 @@ function PhoneMockup() {
         <CalendarClock size={22} color="#1e2433" />
         <span>Scheduled · Tue 9:00<small>TikTok · Reels · Shorts</small></span>
       </div>
-      <div className="float f3"><Sparkles size={16} color="#f26b1d" /> Slideshow</div>
+      <div className="float f3"><Sparkles size={16} color="#65a30d" /> Slideshow</div>
     </div>
   );
 }
@@ -279,7 +279,7 @@ export function Landing() {
       <section className="wrap hero" aria-labelledby="hero-title">
         <div>
           <span className="eyebrow"><Sparkles size={14} aria-hidden="true" /> {PRODUCT.tagline}</span>
-          <h1 id="hero-title">Your content team, <em>on autopilot</em></h1>
+          <h1 id="hero-title">Never break your <em>posting streak</em></h1>
           <p className="lead">{PRODUCT.pitch}</p>
           <StartForm />
         </div>

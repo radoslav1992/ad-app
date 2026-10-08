@@ -125,7 +125,7 @@
 .link-card { display: flex; gap: 14px; align-items: center; text-decoration: none; color: inherit; transition: border-color 0.15s, transform 0.1s; }
 .link-card:hover { border-color: var(--line-2); transform: translateY(-1px); }
 .icon-tile { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: #efeaff; color: #5b3fd6; flex: none; }
-.icon-tile.orange { background: var(--orange-soft); color: #c2410c; }
+.icon-tile.orange { background: var(--brand-soft); color: var(--brand-ink); }
 .icon-tile.green { background: #e7f6ec; color: #15803d; }
 
 /* Creators */
@@ -177,7 +177,7 @@
 .scan-steps span { display: inline-flex; gap: 7px; align-items: center; }
 .scan-steps i { width: 9px; height: 9px; border-radius: 50%; background: #c7ccd5; display: inline-block; }
 .scan-steps i.done { background: var(--green); }
-.scan-steps i.now { background: var(--orange); animation: pulse 0.8s ease-in-out infinite alternate; }
+.scan-steps i.now { background: var(--focus); animation: pulse 0.8s ease-in-out infinite alternate; }
 .savebar { position: sticky; bottom: 16px; z-index: 6; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; margin-top: 20px;
   background: var(--navy); color: #fff; border-radius: 16px; box-shadow: 0 16px 40px rgba(15, 17, 21, 0.3); flex-wrap: wrap; }
 .savebar .btn:not(.accent) { background: transparent; color: #fff; border-color: rgba(255, 255, 255, 0.3); }
@@ -189,7 +189,7 @@
 .plan-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .plan-card { display: flex; flex-direction: column; gap: 14px; position: relative; }
 .plan-card.current { border: 2px solid var(--navy); }
-.plan-card.popular::before { content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 2px; background: linear-gradient(90deg, #f26b1d, #e5484d, #7c5cff);
+.plan-card.popular::before { content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 2px; background: linear-gradient(90deg, #b8f53a, #2dd4bf, #7c5cff);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; }
 .plan-card.current.popular::before, .plan-card.wanted::before { display: none; }
 .plan-card.wanted { border-color: var(--violet); box-shadow: 0 0 0 3px color-mix(in srgb, var(--violet) 35%, transparent), var(--shadow); scroll-margin: 80px; }

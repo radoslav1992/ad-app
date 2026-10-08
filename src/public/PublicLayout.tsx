@@ -136,7 +136,7 @@ export function PublicLayout() {
           <div className="foot-grid">
             <div className="foot-brand">
               <Logo light />
-              <p>{PRODUCT.tagline}: posts written and made for your brand, approved by you, published on schedule.</p>
+              <p>{PRODUCT.tagline}. Written and made for your brand, approved by you, published on schedule.</p>
             </div>
             <nav aria-label="Product">
               <h2>Product</h2>

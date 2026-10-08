@@ -26,11 +26,13 @@ npm run db:remote                        # applies migrations/0001_initial.sql
   image is `renderer/Dockerfile`. The first rollout takes a few minutes.
 - **Workers AI** is used through the `AI` binding for brand profiles and post ideas (`TEXT_MODEL`, default
   `openai/gpt-5.6-luna`, the same model rech-bg uses).
-- **Email Sending:** verify your domain, then add `"allowed_sender_addresses": ["hello@your-domain"]` to the
-  `send_email` binding in `wrangler.jsonc` and set `EMAIL_FROM`.
-- **Custom domain:** add a `routes` entry in `wrangler.jsonc` and set `SITE_URL=https://your-domain`. `SITE_URL`
-  must be the public https origin: the renderer only downloads from it, and OAuth redirects and provider input
-  links are built from it.
+- **Email sending:** set up `hookstreak.com` for sending in Cloudflare Email, the same way as `rechbg.com` for
+  rech-bg. The sender `hello@hookstreak.com` is already allowed in `wrangler.jsonc`.
+- **Domains:** `wrangler.jsonc` attaches `hookstreak.com`, `www.hookstreak.com`, `hookstreak.app` and
+  `www.hookstreak.app` to the Worker as custom domains on deploy (both zones must be on this Cloudflare account,
+  with no other DNS records for those names). The Worker sends every host except `SITE_URL`'s to `SITE_URL` with
+  the same path (308); `*.workers.dev` keeps working. `SITE_URL` must be the public https origin: the renderer
+  only downloads from it, and OAuth redirects and provider input links are built from it.
 - **Turnstile:** create a widget for the domain and set `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`.
 
 ## 2. Variables and secrets
@@ -39,9 +41,9 @@ Set these in Workers → Settings → Variables and Secrets. `keep_vars` keeps t
 
 | Name | Kind | Purpose |
 | --- | --- | --- |
-| `SITE_URL` | text | Public origin, e.g. `https://postloop.app` |
+| `SITE_URL` | text | Public origin, `https://hookstreak.com` |
 | `COMPANY_NAME`, `COMPANY_ADDRESS`, `CONTACT_EMAIL` | text | Operator shown on legal pages (required before sign-ups) |
-| `EMAIL_FROM`, `ADMIN_EMAILS` | text | Sender; comma-separated admin emails (verified accounts become admins) |
+| `EMAIL_FROM`, `ADMIN_EMAILS` | text | Sender (defaults to `CONTACT_EMAIL`); comma-separated admin emails (verified accounts become admins) |
 | `REGISTRATION_ENABLED`, `BILLING_ENABLED`, `MEDIA_ENABLED` | text | `true` to open sign-ups, payments, rendering/AI |
 | `TRIAL_HASH_SECRET` | secret | Long random string |
 | `TURNSTILE_SECRET_KEY` / `TURNSTILE_SITE_KEY` | secret / text | Bot checks |
@@ -55,6 +57,20 @@ Set these in Workers → Settings → Variables and Secrets. `keep_vars` keeps t
 | `TEXT_MODEL` | text | Optional Workers AI model override |
 | `TOKEN_ENCRYPTION_KEY` | secret | `openssl rand -base64 32`; encrypts social tokens. Never change it once accounts are connected |
 | `TIKTOK_CLIENT_KEY`/`_SECRET`, `INSTAGRAM_APP_ID`/`_SECRET`, `GOOGLE_CLIENT_ID`/`_SECRET`, `LINKEDIN_CLIENT_ID`/`_SECRET` | secret | Social apps (docs/SOCIAL.md) |
+
+### The first values for hookstreak.com
+
+To open sign-ups you need only these; AI, Stripe and the networks can follow.
+
+| Name | Value |
+| --- | --- |
+| `SITE_URL` | `https://hookstreak.com` |
+| `CONTACT_EMAIL` | `hello@hookstreak.com` (also the sender) |
+| `COMPANY_NAME`, `COMPANY_ADDRESS` | Your legal entity and address, as they should appear on the legal pages |
+| `ADMIN_EMAILS` | The address you sign up with |
+| `TRIAL_HASH_SECRET`, `TOKEN_ENCRYPTION_KEY` | Secrets: each the output of `openssl rand -base64 32` |
+| `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | From a Turnstile widget for `hookstreak.com` |
+| `REGISTRATION_ENABLED` | `true`, last |
 
 ## 3. Stripe
 

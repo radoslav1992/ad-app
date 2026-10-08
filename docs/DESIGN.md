@@ -1,17 +1,22 @@
 # Design
 
-The product follows the flow and feel of the reference app the owner shared (screenshots of its onboarding and
-dashboard), with its own name, logo and wording. No third-party branding, testimonials or metrics are copied.
+The product follows the flow of the reference app the owner shared (screenshots of its onboarding and dashboard),
+with its own name (Hookstreak), logo, colours and wording. No third-party branding, testimonials or metrics are copied.
 
 ## Look
 
-- Dark canvas (#121212) with a warm brown/orange glow at the top edge and a faint diagonal line texture.
+- **Brand:** electric lime `#b8f53a` on ink `#0c0d10`. Lime is a fill (with ink text) or a glow, never text on white;
+  `--brand-ink` (`#3f6212`) is the lime that reads as text. Violet `#7c5cff` and teal `#2dd4bf` are the supporting
+  accents. Amber chips mean "waiting / worth a look"; green and red stay approve and reject.
+- **Logo:** a hook whose point turns into an upward arrow (the streak), ink on a lime tile (`public/favicon.svg`,
+  `Logo` in `src/ui.tsx`).
+- Dark canvas (`#0c0d10`) with a lime glow top left, a violet glow top right and a faint dot grid.
 - Big, bold, white headings (Bricolage Grotesque); body text Inter.
-- Content sits on a frosted light-grey card (rounded 24px, soft white rim/shadow).
-- Choices are white rounded "pill" tiles; the selected tile turns dark navy (#1e2433) with white text.
+- Content sits on a frosted light card (rounded 26px, soft white rim/shadow).
+- Choices are white rounded "pill" tiles; the selected tile turns ink with white text and a lime underline.
   Multi-select tiles toggle the same way. Icon tiles (e.g. sources) show a line icon above the label.
-- Primary button: full-width dark navy, rounded 18px, disabled = grey/blue-grey. Secondary links: "← Back".
-- Info banners with a gradient (orange → rainbow) border.
+- Primary button: full-width ink, rounded 18px, disabled = grey/blue-grey. Secondary links: "← Back".
+- Info banners with a lime → teal → violet gradient border.
 - Progress dots under the card (current = dark).
 - "Log out" ghost button top right during onboarding.
 - A "Preparing workspace · Setting up your workspace…" card (top right) with a spinner and step dots
@@ -44,7 +49,7 @@ opens Blitz and starts the first batch of posts as soon as the brand analysis is
 
 - Left sidebar: workspace switcher (logo + name), collapse button; Home, Blitz, Create, Inspiration, Automations,
   AI Studio, Creators (AI UGC), Content, Library, Calendar; then Upgrade, Brand, Accounts, Settings (and Admin).
-- Top bar: "Free trial · 6d 23h left" (or the plan and credits) and an **Upgrade** pill.
+- Top bar (light lime): "Free trial · 6d 23h left" (or the plan and credits) and a lime **Upgrade** pill.
 - **Blitz**: one post card in the centre (9:16 video or slideshow, mute toggle), stacked behind it the next ones;
   above it tags (format, topic) and **Why this content?**; left panel "Built on" shows the hook pattern; bottom
   buttons ✕ (reject, ←), **Edit**, ✓ (accept, →); an Accept/Reject stamp while dragging; first-visit tutorial

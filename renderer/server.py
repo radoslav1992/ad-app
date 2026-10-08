@@ -49,7 +49,7 @@ IMAGE_CODECS = {'mjpeg', 'png', 'webp'}
 
 # Machine-readable AI marking (EU AI Act Art. 50(2)) for synthetic output: MP4 container tags plus an XMP packet with
 # the IPTC digital source type (MP4: a top-level 'uuid' box; JPEG: an APP1 segment).
-PRODUCT_NAME = os.environ.get('PRODUCT_NAME') or 'Postloop'
+PRODUCT_NAME = os.environ.get('PRODUCT_NAME') or 'Hookstreak'
 SOURCE_TYPE = 'http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia'
 AI_COMMENT = f'AI-generated (synthetic media) - {PRODUCT_NAME}'
 AI_DESCRIPTION = f'AI-generated synthetic media made with {PRODUCT_NAME}. IPTC digital source type: {SOURCE_TYPE}'

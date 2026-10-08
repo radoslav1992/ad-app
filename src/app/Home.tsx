@@ -92,7 +92,7 @@ function Stat({ label, value, to }: { label: string; value?: number; to: string 
 function Shortcut({ to, icon, title, text }: { to: string; icon: ReactNode; title: string; text: string }) {
   return (
     <Link to={to} className="card row" style={{ textDecoration: "none", alignItems: "flex-start" }}>
-      <span className="logo-mark" style={{ background: "var(--navy)" }}>{icon}</span>
+      <span className="logo-mark" style={{ background: "var(--navy)", color: "#fff" }}>{icon}</span>
       <span><strong>{title}</strong><br /><span className="muted small">{text}</span></span>
     </Link>
   );

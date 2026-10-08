@@ -7,7 +7,7 @@ import type { App, Env, DbUser } from "./types";
 import { now } from "./types";
 import { sha } from "./security";
 import { describeError } from "./error-report";
-import { withDefaults } from "./config";
+import { canonicalUrl, withDefaults } from "./config";
 import { auth, SESSION_COOKIE } from "./auth";
 import { billing, webhook } from "./billing";
 import { billingFailure } from "./billing-errors";
@@ -43,6 +43,12 @@ app.use("*", async (c, next) => {
   if (new URL(c.req.url).protocol === "https:") c.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   // Media files set their own private caching; every other API answer is never cached.
   if (c.req.path.startsWith("/api/") && !c.res.headers.has("Cache-Control")) c.header("Cache-Control", "no-store");
+});
+// One public address. 308 keeps the method and body, so a stray POST lands intact.
+app.use("*", async (c, next) => {
+  const target = canonicalUrl(c.env, new URL(c.req.url));
+  if (target) return c.redirect(target, 308);
+  await next();
 });
 // Upload parts are 8 MiB; everything else is small JSON.
 const PART_PATH = /^\/api\/media\/uploads\/[^/]+\/parts\/\d+$/;
