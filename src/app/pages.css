@@ -40,7 +40,8 @@
 .field-row > .grow .input { width: 100%; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .form-grid .full { grid-column: 1 / -1; }
-.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+/* Positioned, so screen-reader-only text in a wide table is clipped with it instead of widening the page. */
+.table-wrap { position: relative; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 .table-wrap .table th:first-child, .table-wrap .table td:first-child { padding-left: 16px; }
 .table td .clip { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
 @media (max-width: 700px) { .form-grid { grid-template-columns: 1fr; } }
@@ -129,7 +130,7 @@
 .icon-tile.green { background: #e7f6ec; color: #15803d; }
 
 /* Creators */
-.creator-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px; }
+.creator-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 16px; }
 .creator-card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; box-shadow: var(--shadow); min-width: 0; }
 .creator-portrait { position: relative; aspect-ratio: 3 / 4; background: #e9ebef; }
 .creator-portrait img { width: 100%; height: 100%; object-fit: cover; }
@@ -147,7 +148,16 @@
 .price-list { display: flex; flex-direction: column; gap: 10px; font-size: 14px; }
 .price-list li { display: flex; gap: 10px; align-items: flex-start; }
 .price-list li svg { flex: none; margin-top: 2px; color: var(--muted); }
-@media (max-width: 560px) { .photo-pick { grid-template-columns: 1fr; } .photo-slot { max-width: 180px; } }
+@media (max-width: 560px) {
+  .photo-pick { grid-template-columns: 1fr; } .photo-slot { max-width: 180px; }
+  /* Two creators a row on phones: a long library stays browsable. */
+  .creator-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .creator-body { padding: 10px 10px 12px; }
+  .creator-body h3 { font-size: 15px; }
+  .creator-desc { -webkit-line-clamp: 2; line-clamp: 2; }
+  .creator-actions { flex-wrap: wrap; }
+  .creator-actions .btn.sm { flex-basis: 100%; }
+}
 
 /* Brand */
 .brand-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }

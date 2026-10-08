@@ -90,8 +90,18 @@ Sign in with an address in `ADMIN_EMAILS` (verified), then open **Admin**. Uploa
 - **Clips:** short vertical reaction, activity and filler clips. Tag them, e.g. `reaction, woman`. Wall of Text and
   Video Hook & Demo use them.
 - **Green screens:** creators filmed on green. Tag a different key colour as `chroma:#00ff00`.
-- **Creators:** a portrait, or *Import from HeyGen* with an avatar look ID that supports Avatar III. Imported looks
-  use the cheaper library rate.
+- **Creators:** a portrait, or HeyGen avatar looks that support Avatar III. Imported looks use the cheaper library
+  rate.
+  - *HeyGen looks* takes many look IDs at once: one per line or comma separated, up to 500 per paste, sent 10 at a
+    time. Each look is checked with HeyGen, named after the look and given its preview as the portrait. Looks already
+    in the library are skipped. Every ID gets its own result: imported, already in the library, can't be used (and
+    why), or failed for now (put the failed IDs back in the box and run again).
+  - *One look, with details* imports a single look with your own name and description.
+  - The list below searches names and descriptions and filters by gender, on/off and kind. Select rows to switch them
+    on or off or to set their gender in one go. Switched-off creators leave people's lists; posts already made keep
+    them.
+  - Look IDs come from your HeyGen account; the app doesn't browse HeyGen's catalogue. Before adding HeyGen's stock
+    avatars, check that your HeyGen plan and terms allow using them through the API in your product.
 
 You need the rights to everything you upload, including permission for every person shown.
 

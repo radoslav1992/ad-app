@@ -66,6 +66,8 @@ export async function deleteAvatarVideo(e: Env, ticket: HeyGenTicket) {
 /** A look's engines and preview, for administrators linking a library character to a saved avatar. */
 export async function heygenLook(e: Env, lookId: string) {
   const r = await providerFetch(`${looks}/${validId(lookId)}`, { headers: headers(e), signal: AbortSignal.timeout(30000) });
+  // An unknown (or another account's private) look: the admin's input, not a provider failure.
+  if (r.status === 404) { await r.body?.cancel(); throw new ProviderError("AVATAR_NOT_FOUND"); }
   if (!r.ok) throw new ProviderError(await failureCode(r, "AVATAR"));
   const look = ((await r.json()) as any)?.data;
   if (!look || look.id !== lookId) throw new ProviderError("AVATAR_FAILED");

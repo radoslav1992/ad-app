@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Camera, Clock, Crown, Mic, Pencil, Plus, Sparkles, Trash2, UserRound, Wand2 } from "lucide-react";
+import { Camera, Clock, Crown, Mic, Pencil, Plus, Search, Sparkles, Trash2, UserRound, Wand2 } from "lucide-react";
 import { Modal, Spinner, useToast } from "../ui";
-import { api, del, errorText, number, patch, post, useApi, useAuth, usePoll, type Asset, type Character } from "../lib";
+import { api, del, errorText, number, patch, post, useAuth, usePoll, type Asset, type Character } from "../lib";
 import { AVATAR_STEP, IMAGE_CREDITS, VOICE_CHARS, avatarRates, creditsLabel, talkingCredits } from "../../shared/credits";
 import { useCurrentWorkspace } from "./workspace";
 import {
   ConfirmDialog, CreditBlockNotice, Empty, MediaPicker, Tabs, creditBlock, tabPanel, useRetryKey, useSignedInUser, useStableCallback,
 } from "./pickers";
+import { LoadMore, creatorTotal, genderOptions, useCreators, useDebounced, type Making } from "./creators";
 import "./pages.css";
 
-type Making = { id: string; name: string };
 type Filter = "all" | "library" | "own";
 type Gender = "" | "female" | "male";
 const genders: { id: Gender; label: string }[] = [{ id: "", label: "Not specified" }, { id: "female", label: "Female" }, { id: "male", label: "Male" }];
@@ -23,21 +23,34 @@ export function CharactersPage() {
   const user = useSignedInUser();
   const { refresh } = useAuth();
   const toast = useToast();
-  const { data, loading, error, reload, setData } = useApi<{ characters: Character[]; making: Making[] }>("/characters");
   const [filter, setFilter] = useState<Filter>("all");
   const [gender, setGender] = useState<Gender>("");
+  const [query, setQuery] = useState("");
+  const q = useDebounced(query.trim());
+  // Searched and paged on the server: the library can hold thousands of creators.
+  const list = useCreators(q, gender, filter, 48);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<Character | null>(null);
   const [deleting, setDeleting] = useState<Character | null>(null);
-  const making = data?.making || [];
-  usePoll(reload, 4000, making.length > 0);
+  const making = list.first?.making || [];
+  const counts = list.first?.counts;
+  // While a creator is being made, a small check (one row) says when to reload the list.
+  const checkMaking = useStableCallback(async () => {
+    try {
+      const r = await api<{ making: Making[] }>("/characters?source=own&limit=1");
+      const ids = (l: Making[]) => l.map((m) => m.id).sort().join();
+      if (ids(r.making) !== ids(making)) list.reload();
+    } catch { /* the next check tries again */ }
+  });
+  usePoll(checkMaking, 4000, making.length > 0);
 
   // A creator that was being made and no longer is: say whether it worked (a failed one is refunded).
   const wasMaking = useRef<Making[]>([]);
   useEffect(() => {
-    if (!data) return;
-    const gone = wasMaking.current.filter((m) => !data.making.some((x) => x.id === m.id));
-    wasMaking.current = data.making;
+    if (!list.first) return;
+    const now = list.first.making || [];
+    const gone = wasMaking.current.filter((m) => !now.some((x) => x.id === m.id));
+    wasMaking.current = now;
     if (!gone.length) return;
     void refresh();
     void api<{ runs: { id: string; status: string }[] }>("/studio/runs").then(({ runs }) => {
@@ -46,12 +59,13 @@ export function CharactersPage() {
         toast(failed ? `We couldn't make ${m.name || "your creator"}. The credit was refunded. Try a different description.` : `${m.name || "Your creator"} is ready.`, failed ? "bad" : "good");
       }
     }).catch(() => {});
-  }, [data, refresh, toast]);
+  }, [list.first, refresh, toast]);
 
-  const all = data?.characters || [];
-  const counts = { all: all.length, library: all.filter((c) => !c.own).length, own: all.filter((c) => c.own).length };
-  const shown = all.filter((c) => (filter === "all" || (filter === "own") === c.own) && (!gender || c.gender === gender));
+  const filtered = !!q || !!gender;
+  const showMaking = !filtered && filter !== "library" && making.length > 0;
+  const shown = list.items;
   const sampleLibrary = talkingCredits(SAMPLE, "library"), sampleCustom = talkingCredits(SAMPLE, "custom");
+  const clearFilters = () => { setQuery(""); setGender(""); };
 
   return (
     <main className="page">
@@ -65,40 +79,50 @@ export function CharactersPage() {
         </div>
       </div>
 
-      <div className="row between wrap" style={{ marginBottom: 16 }}>
+      <div className="row between" style={{ marginBottom: 16, flexWrap: "wrap" }}>
         <Tabs label="Show creators" idBase="creators" value={filter} onChange={setFilter} items={[
-          { id: "all", label: "All", count: counts.all }, { id: "library", label: "Library", count: counts.library }, { id: "own", label: "Yours", count: counts.own },
+          { id: "all", label: "All", count: creatorTotal(counts, "all") }, { id: "library", label: "Library", count: counts?.library }, { id: "own", label: "Yours", count: counts?.own },
         ]} />
-        <label className="row small">
-          <span className="muted">Gender</span>
-          <select className="select" style={{ width: "auto", padding: "8px 12px" }} value={gender} onChange={(e) => setGender(e.target.value as Gender)}>
-            <option value="">Any</option>
-            <option value="female">Female</option>
-            <option value="male">Male</option>
-          </select>
-        </label>
+        <div className="filter-bar">
+          <label className="search">
+            <Search size={16} aria-hidden="true" />
+            <span className="sr-only">Search creators by name or description</span>
+            <input className="input" type="search" placeholder="Search by name or description" value={query} onChange={(e) => setQuery(e.target.value)} />
+          </label>
+          <label className="row small">
+            <span className="muted">Gender</span>
+            <select className="select compact" value={gender} onChange={(e) => setGender(e.target.value as Gender)}>
+              {genderOptions.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
+            </select>
+          </label>
+        </div>
       </div>
 
       <div {...tabPanel("creators", filter)}>
-        {loading ? (
+        {list.loading && !shown.length ? (
           <div className="creator-grid" aria-busy="true">{Array.from({ length: 8 }, (_, i) => <div key={i} className="skeleton" style={{ aspectRatio: "3 / 4.9" }} />)}</div>
-        ) : error ? (
-          <div className="notice bad" role="alert">{error} <button type="button" className="link" onClick={() => void reload()}>Try again</button></div>
-        ) : !shown.length && !(filter !== "library" && making.length) ? (
-          filter === "own" ? (
+        ) : list.error && !shown.length ? (
+          <div className="notice bad" role="alert">{list.error} <button type="button" className="link" onClick={list.reload}>Try again</button></div>
+        ) : !shown.length && !showMaking ? (
+          filtered ? (
+            <Empty icon={<Search size={24} />} title={q ? `No creators match “${q}”` : "No creators match this filter"}
+              action={<button type="button" className="btn" onClick={clearFilters}>Clear search and filters</button>}>
+              Try other words{gender ? " or another gender" : ""}{filter === "all" ? "" : `, or look in ${filter === "own" ? "the library" : "your own creators"}`}.
+            </Empty>
+          ) : filter === "own" ? (
             <Empty icon={<UserRound size={24} />} title="You haven't made a creator yet"
               action={<button type="button" className="btn primary" onClick={() => setCreating(true)}><Plus size={16} aria-hidden="true" />Make your first creator</button>}>
               Describe someone and we'll make them, or turn your own photo into a talking creator.
             </Empty>
           ) : (
-            <Empty icon={<UserRound size={24} />} title={gender ? "No creators match this filter" : "No creators yet"}
-              action={gender ? <button type="button" className="btn" onClick={() => setGender("")}>Show everyone</button> : <button type="button" className="btn primary" onClick={() => setCreating(true)}>New creator</button>}>
-              {gender ? "Try another filter." : "Library creators are on their way. Meanwhile, make your own."}
+            <Empty icon={<UserRound size={24} />} title="No creators yet"
+              action={<button type="button" className="btn primary" onClick={() => setCreating(true)}>New creator</button>}>
+              Library creators are on their way. Meanwhile, make your own.
             </Empty>
           )
         ) : (
-          <ul className="creator-grid list-plain">
-            {filter !== "library" && making.map((m) => (
+          <ul className={`creator-grid list-plain${list.loading ? " list-stale" : ""}`} aria-busy={list.loading}>
+            {showMaking && making.map((m) => (
               <li key={m.id} className="creator-card" aria-busy="true">
                 <div className="creator-portrait making"><Spinner big label={`Making ${m.name}`} /><span>Making {m.name || "your creator"}…<br /><span className="small">About a minute</span></span></div>
                 <div className="creator-body"><h3>{m.name || "New creator"}</h3><span className="chip">Yours</span></div>
@@ -109,6 +133,7 @@ export function CharactersPage() {
             ))}
           </ul>
         )}
+        <LoadMore next={list.next} loading={list.loadingMore} error={list.moreError} shown={shown.length} total={creatorTotal(counts, filter)} noun="creators" onMore={list.loadMore} />
       </div>
 
       <section className="section card" aria-labelledby="pricing-title">
@@ -133,17 +158,18 @@ export function CharactersPage() {
         </div>
       </section>
 
-      {creating && <NewCreatorModal onClose={() => setCreating(false)} onStarted={() => { setCreating(false); setFilter((f) => (f === "library" ? "all" : f)); void reload(); void refresh(); }} />}
+      {creating && <NewCreatorModal onClose={() => setCreating(false)} onStarted={() => { setCreating(false); setFilter((f) => (f === "library" ? "all" : f)); clearFilters(); list.reload(); void refresh(); }} />}
       {editing && (
         <EditCreatorModal creator={editing} onClose={() => setEditing(null)} onSaved={(c) => {
-          setData((d) => (d ? { ...d, characters: d.characters.map((x) => (x.id === c.id ? c : x)) } : d));
+          list.setItems((items) => items.map((x) => (x.id === c.id ? c : x)));
           setEditing(null);
         }} />
       )}
       {deleting && (
         <ConfirmDialog title="Delete this creator?" onClose={() => setDeleting(null)} onConfirm={async () => {
           await del(`/characters/${deleting.id}`);
-          setData((d) => (d ? { ...d, characters: d.characters.filter((x) => x.id !== deleting.id) } : d));
+          list.setItems((items) => items.filter((x) => x.id !== deleting.id));
+          list.setFirst((f) => (f?.counts ? { ...f, counts: { ...f.counts, own: Math.max(0, f.counts.own - 1) } } : f));
           toast(`${deleting.name} was deleted.`, "good");
         }}>
           <p><strong>{deleting.name}</strong> can't be used in new posts any more. Posts already made with them stay as they are.</p>
@@ -326,6 +352,7 @@ function NewCreatorModal({ onClose, onStarted }: { onClose: () => void; onStarte
 function EditCreatorModal({ creator, onClose, onSaved }: { creator: Character; onClose: () => void; onSaved: (c: Character) => void }) {
   const [name, setName] = useState(creator.name);
   const [description, setDescription] = useState(creator.description);
+  const [gender, setGender] = useState<Gender>(creator.gender === "female" || creator.gender === "male" ? creator.gender : "");
   const [busy, setBusy] = useState(false);
   const toast = useToast();
   const close = useStableCallback(onClose);
@@ -334,9 +361,9 @@ function EditCreatorModal({ creator, onClose, onSaved }: { creator: Character; o
     if (!name.trim()) return;
     setBusy(true);
     try {
-      await patch(`/characters/${creator.id}`, { name: name.trim(), description: description.trim() });
+      await patch(`/characters/${creator.id}`, { name: name.trim(), description: description.trim(), gender });
       toast("Saved.", "good");
-      onSaved({ ...creator, name: name.trim(), description: description.trim() });
+      onSaved({ ...creator, name: name.trim(), description: description.trim(), gender });
     } catch (err) {
       toast(errorText(err), "bad");
       setBusy(false);
@@ -357,6 +384,7 @@ function EditCreatorModal({ creator, onClose, onSaved }: { creator: Character; o
               <span>Name</span>
               <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} required />
             </label>
+            <GenderSelect id="edit-creator-gender" value={gender} onChange={setGender} />
             <label className="field">
               <span>Description <span className="counter">{description.trim().length}/300</span></span>
               <textarea className="textarea" rows={3} maxLength={300} value={description} onChange={(e) => setDescription(e.target.value)} />
