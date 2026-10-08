@@ -1,0 +1,43 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ad-app",
+  "main": "server/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // Dashboard variables and secrets survive GitHub deploys.
+  "keep_vars": true,
+  // Add your production domain here once it is on Cloudflare, e.g.
+  // "routes": [{ "pattern": "example.com", "custom_domain": true }],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true,
+  },
+  "ai": { "binding": "AI" },
+  // Cloudflare Email Sending: add "allowed_sender_addresses": ["hello@your-domain"] when the domain is verified.
+  "send_email": [{ "name": "EMAIL" }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ad-app",
+      "database_id": "f6a24d29-a0cd-4ee8-a1f0-44c850d7e3e3",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "ad-app-media" }],
+  "containers": [
+    { "class_name": "MediaRenderer", "image": "./renderer/Dockerfile", "max_instances": 3, "instance_type": "standard-2" },
+  ],
+  "durable_objects": { "bindings": [{ "name": "MEDIA_RENDERER", "class_name": "MediaRenderer" }] },
+  "migrations": [{ "tag": "renderer-v1", "new_sqlite_classes": ["MediaRenderer"] }],
+  "workflows": [
+    { "name": "ad-app-content", "binding": "CONTENT", "class_name": "ContentGeneration" },
+    { "name": "ad-app-scan", "binding": "SCAN", "class_name": "WorkspaceScan" },
+    { "name": "ad-app-publish", "binding": "PUBLISH", "class_name": "Publication" },
+  ],
+  // Every minute: due posts are published. Heavier maintenance runs once an hour inside the same handler.
+  "triggers": { "crons": ["* * * * *"] },
+  "observability": { "enabled": true },
+  "limits": { "cpu_ms": 120000 },
+}

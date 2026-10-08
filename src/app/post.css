@@ -1,0 +1,13 @@
+.phone-frame { position: relative; aspect-ratio: 9 / 16; width: 100%; border-radius: 22px; overflow: hidden; background: #0b0d12; color: #fff; box-shadow: 0 18px 40px rgba(15, 17, 21, 0.25); }
+.phone-frame > img, .phone-frame > video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.phone-frame.placeholder { display: grid; place-items: center; background: linear-gradient(160deg, #1e2433, #3a2a1f); text-align: center; font-size: 14px; }
+.phone-frame .mute { position: absolute; top: 12px; left: 12px; width: 38px; height: 38px; border-radius: 50%; border: 0; background: rgba(0, 0, 0, 0.45); color: #fff; display: grid; place-items: center; cursor: pointer; }
+.slide-arrow { position: absolute; top: 50%; transform: translateY(-50%); width: 34px; height: 34px; border-radius: 50%; border: 0; background: rgba(255, 255, 255, 0.85); color: #111; display: grid; place-items: center; cursor: pointer; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }
+.slide-arrow.left { left: 10px; }
+.slide-arrow.right { right: 10px; }
+.slide-dots { position: absolute; bottom: 12px; left: 0; right: 0; display: flex; justify-content: center; gap: 5px; }
+.slide-dots span { width: 6px; height: 6px; border-radius: 50%; background: rgba(255, 255, 255, 0.5); }
+.slide-dots span.on { background: #fff; }
+.text-preview .tp-stage { position: absolute; top: 0; left: 0; transform-origin: 0 0; pointer-events: none; }
+.tp-line { position: absolute; left: 0; right: 0; text-align: center; transform: translateY(-50%); font-family: "Noto Sans", sans-serif; white-space: pre; paint-order: stroke fill; }
+.tp-box { position: absolute; left: 50%; transform: translate(-50%, -50%); }
