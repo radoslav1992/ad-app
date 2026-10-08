@@ -18,16 +18,19 @@ export type CatalogItem = { ref: string; id: string; name: string; tags?: string
 export type Catalog = { images: CatalogItem[]; videos: CatalogItem[]; clips: CatalogItem[]; greens: CatalogItem[]; music: CatalogItem[]; characters: CatalogItem[] };
 export type Capabilities = { aiMedia: boolean; talking: boolean };
 
-/** Everything the writer may use for this workspace (ready media only). */
-export async function loadCatalog(env: Env, userId: string, workspaceId: string): Promise<Catalog> {
+/** Everything the writer may use for this workspace (ready media only). `chosen` are IDs the person picked: they
+ *  lead their lists, so a pick from deep in a large library or upload history is never cut off by the limits. */
+export async function loadCatalog(env: Env, userId: string, workspaceId: string, chosen: (string | undefined)[] = []): Promise<Catalog> {
+  const picks = [...new Set(chosen.filter((x): x is string => !!x))].slice(0, 10);
+  const first = `id IN (${picks.map(() => "?").join(",") || "NULL"}) DESC`;
   // Only whether speech was found is read from the meta (not the transcript itself).
   const assets = (await env.DB.prepare(
-    "SELECT id,kind,name,mime,duration,json_extract(meta,'$.speech.status') AS speech FROM media_assets WHERE user_id=? AND status='ready' AND post_id IS NULL AND (workspace_id=? OR workspace_id IS NULL) AND kind IN ('brand','upload','ai_image','ai_clip') ORDER BY created_at DESC LIMIT 200",
-  ).bind(userId, workspaceId).all<any>()).results;
-  const library = (await env.DB.prepare("SELECT id,kind,name,tags,duration FROM library_items WHERE active=1 ORDER BY created_at DESC LIMIT 300").all<any>()).results;
+    `SELECT id,kind,name,mime,duration,json_extract(meta,'$.speech.status') AS speech FROM media_assets WHERE user_id=? AND status='ready' AND post_id IS NULL AND (workspace_id=? OR workspace_id IS NULL) AND kind IN ('brand','upload','ai_image','ai_clip') ORDER BY ${first}, created_at DESC LIMIT 200`,
+  ).bind(userId, workspaceId, ...picks).all<any>()).results;
+  const library = (await env.DB.prepare(`SELECT id,kind,name,tags,duration FROM library_items WHERE active=1 ORDER BY ${first}, created_at DESC LIMIT 300`).bind(...picks).all<any>()).results;
   const characters = (await env.DB.prepare(
-    "SELECT id,name,description,gender,look_id,user_id FROM characters WHERE active=1 AND (user_id IS NULL OR user_id=?) ORDER BY user_id IS NULL, created_at DESC LIMIT 60",
-  ).bind(userId).all<any>()).results;
+    `SELECT id,name,description,gender,look_id,user_id FROM characters WHERE active=1 AND (user_id IS NULL OR user_id=?) ORDER BY ${first}, user_id IS NULL, created_at DESC LIMIT 60`,
+  ).bind(userId, ...picks).all<any>()).results;
   const items = (rows: any[], prefix: string, map: (r: any) => Partial<CatalogItem> = () => ({})) =>
     rows.map((r, i) => ({ ref: `${prefix}${i + 1}`, id: r.id, name: String(r.name || "").slice(0, 80), ...map(r) }));
   return {

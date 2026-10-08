@@ -6,6 +6,7 @@ import { useCurrentWorkspace } from "./workspace";
 import { TextPreview, type PreviewBackground, type TextBlock } from "./TextPreview";
 import { CaptionStylePicker, EditorSection, TextAnimationPicker } from "./CaptionPickers";
 import { MediaPicker, LibraryPicker } from "./pickers";
+import { CreatorField } from "./creators";
 import { Switch, useToast } from "../ui";
 import { formatIds, formats, recordingCurrent, specCredits, specSchema, HOOK_CLIP_MAX_SECONDS, type FormatId, type Spec, type Subtitles } from "../../shared/formats";
 import { hookPatterns, writingStyles, writingStyleIds, type WritingStyle } from "../../shared/hooks";
@@ -282,14 +283,8 @@ export function Create() {
               {format !== "ugc" && <InputRow label="Audio" value={picked(inputs.musicTrackId)?.name} onChange={() => setPicker({ library: "music", target: "input:musicTrackId" })} onClear={() => setInputs({ ...inputs, musicTrackId: undefined })} />}
               {format === "ugc" && (
                 <div className="card flat stack">
-                  <span className="label">Creator</span>
-                  <div className="creator-row">
-                    {characters.length ? characters.map((c) => (
-                      <button key={c.id} className="creator" aria-pressed={inputs.characterId === c.id} onClick={() => setInputs({ ...inputs, characterId: c.id })} title={c.name}>
-                        <img src={c.image} alt="" /><span>{c.name}</span>
-                      </button>
-                    )) : <p className="muted small">No creators yet. <Link to="/app/characters">Make one</Link>.</p>}
-                  </div>
+                  <CreatorField value={inputs.characterId} onClear={() => setInputs({ ...inputs, characterId: undefined })}
+                    onChange={(id, c) => { setInputs({ ...inputs, characterId: id }); setCharacters((l) => [c, ...l.filter((x) => x.id !== id)]); }} />
                   <label className="field"><span>Voice</span>
                     <select className="select" value={voice} onChange={(e) => setVoice(e.target.value)}>
                       {voices.map((v) => <option key={v.id} value={v.id}>{v.name} — {v.tone} ({v.accent})</option>)}
@@ -372,7 +367,7 @@ export function Create() {
                   )}
                 </div>
                 <Inspector spec={spec} look={look} setLook={setLook} slide={slide} setSlide={setSlide} onChange={change}
-                  pick={(p) => setPicker(p)} aiPrompts={aiPrompts} characters={characters} demoSeconds={picked(spec.format === "hook_demo" ? spec.demo.assetId : undefined)?.duration} />
+                  pick={(p) => setPicker(p)} aiPrompts={aiPrompts} addCharacter={(c) => setCharacters((l) => [c, ...l.filter((x) => x.id !== c.id)])} demoSeconds={picked(spec.format === "hook_demo" ? spec.demo.assetId : undefined)?.duration} />
               </div>
               {spec.format === "ugc" && (
                 <EditorSection title="Captions" hint="Word-by-word captions of what your creator says. The preview plays a sample until the voice is recorded.">
@@ -491,9 +486,9 @@ function SubtitlesSection({ clip, subtitles, soundKept, where, finding, onFind, 
 }
 
 /** The editor's right-hand controls: text look, media swaps, slides, sound. */
-function Inspector({ spec, look, setLook, slide, setSlide, onChange, pick, aiPrompts, characters, demoSeconds }: {
+function Inspector({ spec, look, setLook, slide, setSlide, onChange, pick, aiPrompts, addCharacter, demoSeconds }: {
   spec: Spec; look: TextLook; setLook: (l: TextLook) => void; slide: number; setSlide: (n: number) => void; onChange: (s: Partial<Spec>) => void;
-  pick: (p: Picker) => void; aiPrompts: number; characters: Character[];
+  pick: (p: Picker) => void; aiPrompts: number; addCharacter: (c: Character) => void;
   /** Length of the chosen demo video, when known. */
   demoSeconds?: number;
 }) {
@@ -566,11 +561,7 @@ function Inspector({ spec, look, setLook, slide, setSlide, onChange, pick, aiPro
       )}
       {spec.format === "ugc" && (
         <div className="stack" style={{ gap: 8 }}>
-          <label className="field"><span className="small">Creator</span>
-            <select className="select" value={spec.characterId} onChange={(e) => onChange({ characterId: e.target.value })}>
-              {characters.map((c) => <option key={c.id} value={c.id}>{c.name}{c.premium ? " (premium)" : ""}</option>)}
-            </select>
-          </label>
+          <CreatorField value={spec.characterId} onChange={(id, c) => { addCharacter(c); onChange({ characterId: id }); }} />
           <label className="field"><span className="small">Voice</span>
             <select className="select" value={spec.voiceId} onChange={(e) => onChange({ voiceId: e.target.value })}>
               {voices.map((v) => <option key={v.id} value={v.id}>{v.name} — {v.tone}</option>)}

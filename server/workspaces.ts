@@ -148,9 +148,9 @@ const generateSchema = z.object({
 type GenerateRequest = z.infer<typeof generateSchema>;
 /** Writes specs for a workspace (shared by drafts, Blitz batches and automations). */
 export async function writeSpecs(env: Env, user: DbUser, w: any, d: GenerateRequest) {
-  const catalog = await loadCatalog(env, user.id, w.id);
-  const pick = <T extends { id: string }>(list: T[], id?: string) => (id ? list.filter((i) => i.id === id) : list);
   const i = d.inputs;
+  const catalog = await loadCatalog(env, user.id, w.id, [i.backgroundLibraryId, i.backgroundAssetId, i.musicTrackId, i.demoAssetId, i.characterId, i.greenScreenId]);
+  const pick = <T extends { id: string }>(list: T[], id?: string) => (id ? list.filter((i) => i.id === id) : list);
   if (i.backgroundLibraryId) catalog.clips = pick(catalog.clips, i.backgroundLibraryId);
   if (i.backgroundAssetId) { catalog.images = pick(catalog.images, i.backgroundAssetId); catalog.clips = []; }
   if (i.musicTrackId) catalog.music = pick(catalog.music, i.musicTrackId);

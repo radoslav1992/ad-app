@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "../server/index";
 import { call, signedIn, testEnv } from "./helpers";
 import { parseLookIds } from "../shared/creators";
+import { loadCatalog } from "../server/ideas";
 
 /** A JPEG header declaring width×height (enough for imageInfo). */
 function jpeg(width = 600, height = 800) {
@@ -263,5 +264,19 @@ describe("choosing among many creators", () => {
     expect(sqlite.prepare("SELECT name,gender FROM characters WHERE id=?").get(mine)).toEqual({ name: "Renamed", gender: "male" });
     expect((await call(worker, env, "PATCH", `/api/characters/${mine}`, { gender: "other" }, user.cookie)).status).toBe(400);
     expect((await call(worker, env, "PATCH", `/api/characters/${lib}`, { gender: "male" }, user.cookie)).status).toBe(404);
+  });
+});
+
+describe("the post writer and a large library", () => {
+  it("always offers the creator the person picked, however far down the library it is", async () => {
+    const { env, sqlite, user } = setup();
+    const oldest = creator(sqlite, { name: "Oldest", at: 1 });
+    for (let n = 0; n < 70; n++) creator(sqlite);
+    const plain = await loadCatalog(env, user.id, crypto.randomUUID());
+    expect(plain.characters).toHaveLength(60);
+    expect(plain.characters.some((c) => c.id === oldest)).toBe(false);
+    const picked = await loadCatalog(env, user.id, crypto.randomUUID(), [oldest, undefined]);
+    expect(picked.characters).toHaveLength(60);
+    expect(picked.characters[0]).toMatchObject({ id: oldest, name: "Oldest", ref: "char1" });
   });
 });
