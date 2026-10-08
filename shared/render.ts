@@ -68,15 +68,20 @@ export type StillsPayload = {
 };
 /** Reads an uploaded file: video/audio length, picture size, whether it has sound. */
 export type InspectPayload = { id: string; operation: "inspect"; url: string };
-export type RenderPayload = ComposePayload | StillsPayload | InspectPayload;
+/**
+ * An upload's sound for speech recognition: mono 16 kHz MP3 parts of `part` seconds (10–180), file n starting at
+ * n × part seconds, 10 minutes at most. No files when it is silent; MEDIA_NO_AUDIO when it has no sound at all.
+ */
+export type AudioPayload = { id: string; operation: "audio"; url: string; part: number };
+export type RenderPayload = ComposePayload | StillsPayload | InspectPayload | AudioPayload;
 
 export type RenderStatus = {
   status: "running" | "completed" | "failed";
-  /** compose: length of the video; inspect: length of the media (0 for images). */
+  /** compose: length of the video; inspect: length of the media (0 for images); audio: length of the sound. */
   duration?: number;
   /** A short code (MEDIA_*), never a raw message. */
   error?: string;
-  /** How many output files GET /jobs/:id/file/:n serves. */
+  /** How many output files GET /jobs/:id/file/:n serves (MP4, JPEG or, for audio, MP3). */
   files?: number;
   /** inspect: what the file is. */
   meta?: { kind: "video" | "audio" | "image"; width: number; height: number; hasAudio: boolean };

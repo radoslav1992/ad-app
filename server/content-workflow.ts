@@ -14,6 +14,8 @@ import { avatarVideoStatus, deleteAvatarVideo, submitAvatarVideo, type HeyGenTic
 import { releaseRender, renderFailures, renderFile, renderStatus, submitRender } from "./renderer";
 import { planRender, type Media, type PlanContext } from "./render-plan";
 import { failAsset } from "./media";
+import { claimSpeech, mayHaveSpeech, SPEECH_PART_SECONDS, transcribe } from "./speech";
+import { SPEECH_MAX_SECONDS } from "../shared/speech";
 import { workspaceSettings } from "./workspaces";
 import { workspaceProfile } from "./ideas";
 import {
@@ -374,35 +376,51 @@ async function makeStandalone(e: Env, step: WorkflowStep, run: RunInfo, phase: P
 }
 export const CHARACTER_CREDITS = IMAGE_CREDITS;
 
-/** Checks an uploaded video or track with the renderer (length, picture size, sound) before it can be used. */
+/** Waits for a renderer job (on a free container) and returns its final status and the slot that holds it. */
+async function rendererJob(e: Env, step: WorkflowStep, name: string, payload: RenderPayload, rounds: number, wait: "4 seconds" | "8 seconds") {
+  let slot: number | null = null, result: RenderStatus | null = null;
+  for (let i = 0; i < rounds && !result; i++) {
+    const r = await step.do(`${name}-${i}`, { retries: { limit: 2, delay: "10 seconds" }, timeout: "2 minutes" }, async () => {
+      if (slot === null) {
+        const accepted = await submitRender(e, payload, null, async () => {});
+        if (accepted === null) return { slot: null, status: { status: "running" } as RenderStatus };
+        return { slot: accepted, status: await renderStatus(e, accepted, payload.id) };
+      }
+      return { slot, status: await renderStatus(e, slot, payload.id) };
+    });
+    slot = r.slot;
+    if (r.status.status === "completed") result = r.status;
+    else if (r.status.status === "failed") throw new Error(r.status.error || "MEDIA_FORMAT");
+    else await step.sleep(`${name}-wait-${i}`, wait);
+  }
+  if (!result || slot === null) throw new Error("MEDIA_TIMEOUT");
+  return { slot, result };
+}
+
+/**
+ * Checks an uploaded video or track with the renderer (length, picture size, sound) before it can be used, then
+ * looks for speech in it. A ready file with speech pending ("Find speech") only has its speech looked for.
+ */
 async function inspectUpload(e: Env, step: WorkflowStep, assetId: string) {
-  const asset = await step.do("load", async () => e.DB.prepare("SELECT id,mime,meta,status FROM media_assets WHERE id=? AND status='checking'").bind(assetId).first<any>());
+  const asset = await step.do("load", async () => e.DB.prepare("SELECT id,user_id,kind,mime,meta,status,duration FROM media_assets WHERE id=? AND status IN ('checking','ready')").bind(assetId).first<any>());
   if (!asset) return;
+  if (asset.status === "ready") return findSpeech(e, step, asset.id);
   const meta = json<any>(asset.meta, {});
   const payload: RenderPayload = { id: asset.id, operation: "inspect", url: `${siteUrl(e)}/api/upload-inputs/${asset.id}?token=${meta.token}` };
+  let speech = false;
   try {
-    let slot: number | null = null, result: RenderStatus | null = null;
-    for (let i = 0; i < 90 && !result; i++) {
-      const r = await step.do(`inspect-${i}`, { retries: { limit: 2, delay: "10 seconds" }, timeout: "2 minutes" }, async () => {
-        if (slot === null) {
-          const accepted = await submitRender(e, payload, null, async () => {});
-          if (accepted === null) return { slot: null, status: { status: "running" } as RenderStatus };
-          return { slot: accepted, status: await renderStatus(e, accepted, asset.id) };
-        }
-        return { slot, status: await renderStatus(e, slot, asset.id) };
-      });
-      slot = r.slot;
-      if (r.status.status === "completed") result = r.status;
-      else if (r.status.status === "failed") throw new Error(r.status.error || "MEDIA_FORMAT");
-      else await step.sleep(`inspect-wait-${i}`, "4 seconds");
-    }
-    if (!result?.meta) throw new Error("MEDIA_TIMEOUT");
+    const { slot, result } = await rendererJob(e, step, "inspect", payload, 90, "4 seconds");
+    if (!result.meta) throw new Error("MEDIA_TIMEOUT");
     const m = result.meta, expected = asset.mime.split("/")[0];
     if (m.kind !== expected) throw new Error("MEDIA_FORMAT");
-    await step.do("ready", async () => {
+    speech = await step.do("ready", async () => {
+      // Files that may hold speech are transcribed next (the renderer reads them again with a new capability token).
+      const checked = { hasAudio: m.hasAudio };
+      const listen = mayHaveSpeech({ ...asset, duration: result.duration || 0 }, m.hasAudio) ? await claimSpeech(e, asset.user_id, checked) : null;
       await e.DB.prepare("UPDATE media_assets SET status='ready',duration=?,width=?,height=?,meta=?,updated_at=? WHERE id=? AND status='checking'")
-        .bind(result!.duration || 0, m.width || 0, m.height || 0, JSON.stringify({ hasAudio: m.hasAudio }), now(), asset.id).run();
-      if (slot !== null) await releaseRender(e, slot, asset.id);
+        .bind(result.duration || 0, m.width || 0, m.height || 0, JSON.stringify(listen || checked), now(), asset.id).run();
+      await releaseRender(e, slot, asset.id);
+      return !!listen;
     });
   } catch (error) {
     const code = error instanceof Error ? error.message : "";
@@ -412,6 +430,61 @@ async function inspectUpload(e: Env, step: WorkflowStep, assetId: string) {
       MEDIA_FORMAT: "This file can't be read. Use MP4, MOV or WebM videos and MP3, WAV, M4A or OGG tracks.",
       MEDIA_TIMEOUT: "Checking this file took too long. Try uploading it again.",
     } as Record<string, string>)[code] || "This file couldn't be checked. Try uploading it again."));
+  }
+  if (speech) await findSpeech(e, step, asset.id);
+}
+
+/** Changes a file's meta (read fresh, so other changes are kept). */
+async function patchMeta(e: Env, assetId: string, change: (meta: any) => void) {
+  const row = await e.DB.prepare("SELECT meta FROM media_assets WHERE id=?").bind(assetId).first<{ meta: string }>();
+  if (!row) return;
+  const meta = json<any>(row.meta, {});
+  change(meta);
+  await e.DB.prepare("UPDATE media_assets SET meta=?,updated_at=? WHERE id=?").bind(JSON.stringify(meta), now(), assetId).run();
+}
+/**
+ * Transcribes a ready file whose speech is pending: the renderer cuts its sound into MP3 parts, Whisper hears each.
+ * Any failure leaves the file usable, with no subtitles ("failed"; it can be tried again).
+ */
+async function findSpeech(e: Env, step: WorkflowStep, assetId: string) {
+  const job = await step.do("speech-start", async () => {
+    const a = await e.DB.prepare("SELECT meta,status FROM media_assets WHERE id=?").bind(assetId).first<any>();
+    const meta = json<any>(a?.meta, {});
+    if (a?.status !== "ready" || meta.speech?.status !== "pending" || typeof meta.listen?.token !== "string") return null;
+    return { id: uid(), url: `${siteUrl(e)}/api/upload-inputs/${assetId}?token=${meta.listen.token}` };
+  });
+  if (!job) return;
+  let slot: number | null = null;
+  try {
+    const payload: RenderPayload = { id: job.id, operation: "audio", url: job.url, part: SPEECH_PART_SECONDS };
+    const done = await rendererJob(e, step, "speech-audio", payload, 75, "4 seconds");
+    slot = done.slot;
+    const files = Math.min(done.result.files || 0, Math.ceil(SPEECH_MAX_SECONDS / SPEECH_PART_SECONDS));
+    await step.do("speech-transcribe", { retries: { limit: 2, delay: "20 seconds" }, timeout: "10 minutes" }, async () => {
+      const parts: Uint8Array[] = [];
+      for (let n = 0; n < files; n++) {
+        const bytes = new Uint8Array(await (await renderFile(e, done.slot, job.id, n)).arrayBuffer());
+        if (bytes.length > 2 * MB) throw new Error("MEDIA_TOO_LARGE");
+        parts.push(bytes);
+      }
+      const transcript = files ? await transcribe(e, parts, SPEECH_PART_SECONDS) : { language: "", words: [] };
+      await patchMeta(e, assetId, (meta) => {
+        const found = transcript.words.length > 0;
+        meta.speech = { status: found ? "found" : "none", at: now(), ...(found && transcript.language && { language: transcript.language }) };
+        if (found) meta.transcript = transcript;
+        else delete meta.transcript;
+        delete meta.listen;
+      });
+    });
+  } catch (error) {
+    // Never a failed upload: the file stays ready, only without subtitles.
+    console.error("Speech not found", { assetId, code: error instanceof Error && /^[A-Z_]{3,40}$/.test(error.message) ? error.message : "INTERNAL" });
+    await step.do("speech-failed", () => patchMeta(e, assetId, (meta) => {
+      meta.speech = { status: "failed", at: now() };
+      delete meta.listen;
+    }));
+  } finally {
+    if (slot !== null) await step.do("speech-release", () => releaseRender(e, slot!, job.id));
   }
 }
 

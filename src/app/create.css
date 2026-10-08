@@ -30,4 +30,27 @@
 .color-field { gap: 8px; }
 .color-field input[type="color"] { width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 8px; padding: 0; background: none; cursor: pointer; }
 .color-field code { margin-left: auto; color: var(--muted); font-size: 12px; }
+.preview-parts { margin: 10px auto 0; max-width: 200px; }
+/* Captions and subtitles under the preview: live samples of each style, chosen like the other tiles. */
+.editor-section { border-top: 1px solid var(--line); margin-top: 22px; padding-top: 18px; display: flex; flex-direction: column; gap: 12px; }
+.editor-section .row.between { align-items: flex-start; gap: 14px; }
+.editor-section .section-title { font-size: 16px; margin: 0 0 2px; font-family: var(--font); font-weight: 700; }
+.editor-section .muted.small { display: flex; gap: 8px; align-items: center; margin: 0; }
+.style-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; }
+.style-tile { border: 1px solid var(--line); background: #fff; border-radius: 14px; padding: 6px 6px 9px; display: flex; flex-direction: column; gap: 3px; text-align: left; cursor: pointer; color: var(--text); min-width: 0; }
+.style-tile:hover { border-color: var(--line-2); }
+.style-tile[aria-checked="true"] { background: var(--navy); border-color: var(--navy); color: #fff; box-shadow: inset 0 -3px 0 var(--brand); }
+.style-tile .loop-canvas { aspect-ratio: 480 / 300; border-radius: 9px; background: linear-gradient(160deg, #2a3142, #1a1d26); margin-bottom: 4px; }
+.style-name { font-weight: 700; font-size: 13px; padding: 0 3px; }
+.style-about { font-size: 11.5px; line-height: 1.3; color: var(--muted); padding: 0 3px; }
+.style-tile[aria-checked="true"] .style-about { color: #c9ced8; }
+.loop-canvas { display: block; width: 100%; }
+.anim-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.anim-tile { border: 1px solid var(--line); background: #fff; border-radius: 10px; padding: 4px 4px 5px; display: flex; flex-direction: column; gap: 3px; align-items: stretch; font-size: 12px; font-weight: 600; cursor: pointer; color: var(--text); min-width: 0; }
+.anim-tile .loop-canvas { aspect-ratio: 200 / 120; border-radius: 7px; background: linear-gradient(160deg, #2a3142, #1a1d26); }
+.anim-tile[aria-checked="true"] { background: var(--navy); border-color: var(--navy); color: #fff; box-shadow: inset 0 -3px 0 var(--brand); }
 @media (max-width: 1100px) { .create-grid { grid-template-columns: 1fr; } .preview-grid { grid-template-columns: 1fr; } }
+@media (max-width: 560px) {
+  .style-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .anim-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+}

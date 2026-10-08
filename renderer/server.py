@@ -6,7 +6,8 @@ The payloads and the HTTP API are described in shared/render.ts:
   GET    /jobs/:id/file/:n  -> the n-th output file (video/mp4 or image/jpeg)
   DELETE /jobs/:id          -> forgets the job (stops it if running)
 Operations: 'compose' (segments + voice + music + burned ASS -> MP4, optional JPEG cover), 'stills' (one JPEG per
-slide) and 'inspect' (what an uploaded file is). One job runs at a time; inputs are downloaded only from SOURCE_ORIGIN.
+slide), 'inspect' (what an uploaded file is) and 'audio' (an upload's sound as small MP3 parts for speech recognition).
+One job runs at a time; inputs are downloaded only from SOURCE_ORIGIN.
 """
 import json, math, os, re, shutil, struct, subprocess, tempfile, threading, time, urllib.error, urllib.request
 from http.client import HTTPException
@@ -16,7 +17,7 @@ from xml.sax.saxutils import escape, quoteattr
 
 JOBS = {}
 LOCK = threading.Lock()
-OPERATIONS = ('compose', 'stills', 'inspect')
+OPERATIONS = ('compose', 'stills', 'inspect', 'audio')
 MAX_BODY = 2 * 1024 * 1024          # bytes of a POST /jobs payload
 MAX_BYTES = 500 * 1024 * 1024       # bytes of one downloaded input
 MAX_SIDE = 4096                     # pixels on either side of an input picture
@@ -35,6 +36,10 @@ FINISHED_TTL = 1800                 # seconds a finished job's files wait for th
 DOWNLOAD_DEADLINE = 600
 FADE_IN, FADE_OUT = 1.0, 1.5        # music fades (seconds)
 DUCK, DUCK_RAMP = 0.7, 0.3          # music is lowered by 70% under speech, with 0.3 s ramps
+SPEECH_RATE = 16000                 # speech recognition hears mono 16 kHz
+SPEECH_PART = (10, 180, 120)        # seconds per audio part: least, most, default (the Worker asks for its size)
+MAX_SPEECH_PART = 2 * 1024 * 1024   # bytes of one MP3 part (32 kbit/s: about 1 MB for 180 s)
+SILENCE = 0.003                     # peak below this share of full scale (about -50 dBFS): nothing to hear
 # The caption fonts (renderer/fonts, the same files the browser preview uses); libass loads them before system fonts.
 FONTS_DIR = os.environ.get('FONTS_DIR', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fonts'))
 CURRENT = threading.local()  # the job this worker thread processes, so a cancel can stop its FFmpeg
@@ -567,6 +572,57 @@ def inspect(job, payload, origin):
     job.update(status='completed', duration=round(media['duration'], 3), files=0, outputs=[],
                meta={k: media[k] for k in ('kind', 'width', 'height', 'hasAudio')})
 
+def audio_plan(payload, origin):
+    """Validates an audio payload completely, before anything is downloaded."""
+    url = input_url(payload.get('url'), origin)
+    low, high, default = SPEECH_PART
+    part = number(payload['part'], low, high) if payload.get('part') is not None else float(default)
+    return {'url': url, 'part': part}
+
+def wav_samples(path):
+    """The samples of a 16-bit PCM WAV that FFmpeg wrote (its 'data' chunk follows the format and any LIST chunk)."""
+    with open(path, 'rb') as f: data = f.read()
+    if data[:4] != b'RIFF' or data[8:12] != b'WAVE': raise ValueError('Media processing failed: not a WAV')
+    at = 12
+    while at + 8 <= len(data):
+        name, size = data[at:at + 4], struct.unpack('<I', data[at + 4:at + 8])[0]
+        if name == b'data':
+            size = min(size, len(data) - at - 8) // 2 * 2
+            return memoryview(data)[at + 8:at + 8 + size].cast('h')
+        at += 8 + size + (size & 1)
+    raise ValueError('Media processing failed: no sound data')
+
+def extract_audio(job, payload, origin):
+    """The sound of an upload for speech recognition: mono 16 kHz MP3 parts of `part` seconds (output n starts at
+    n * part seconds), at most 10 minutes in all. A file without sound fails (MEDIA_NO_AUDIO); a silent one has no
+    parts. `duration` is the length of the sound."""
+    plan = checked(audio_plan, payload, origin)
+    source = os.path.join(job['dir'], 'input0')
+    download(plan['url'], source)
+    media = classify(source)
+    if media['kind'] == 'image' or not media['hasAudio']: raise ValueError('Input has no audio')
+    wav = os.path.join(job['dir'], 'speech.wav')
+    command(['ffmpeg','-nostdin','-v','error','-threads','1','-protocol_whitelist','file,pipe','-i',source,'-map','0:a:0','-vn',
+             '-ac','1','-ar',str(SPEECH_RATE),'-t',str(MAX_LENGTH),'-c:a','pcm_s16le','-f','wav',wav], timeout=600)
+    samples = wav_samples(wav)
+    total = len(samples) / SPEECH_RATE
+    loudest = max(max(samples), -min(samples)) / 32768 if len(samples) else 0.0
+    samples.release()
+    outputs = []
+    if loudest >= SILENCE:
+        # Cut from the decoded WAV, so each part starts exactly at n * part seconds.
+        for n in range(int(math.ceil(total / plan['part']))):
+            start = n * plan['part']
+            length = min(plan['part'], total - start)
+            if length < 0.3: break
+            output = os.path.join(job['dir'], f'output{n}.mp3')
+            command(['ffmpeg','-nostdin','-v','error','-threads','1','-protocol_whitelist','file,pipe','-ss',f'{start:.3f}','-t',f'{length:.3f}',
+                     '-i',wav,'-ac','1','-ar',str(SPEECH_RATE),'-c:a','libmp3lame','-b:a','32k','-f','mp3',output], timeout=300)
+            if not os.path.getsize(output): raise ValueError('Media processing failed: no audio part')
+            if os.path.getsize(output) > MAX_SPEECH_PART: raise ValueError('Output too large')
+            outputs.append(output)
+    job.update(status='completed', duration=round(total, 3), files=len(outputs), outputs=outputs)
+
 def failure_code(e):
     """A short reason the Worker can explain to the user (never the raw message)."""
     m = str(e).lower()
@@ -588,6 +644,7 @@ def process(job, payload, id=None):
         if operation == 'compose': compose(job, payload, origin)
         elif operation == 'stills': stills(job, payload, origin)
         elif operation == 'inspect': inspect(job, payload, origin)
+        elif operation == 'audio': extract_audio(job, payload, origin)
         else: raise ValueError('Invalid operation')
     except Exception as e:
         job.update(status='failed', error=failure_code(e))
@@ -610,7 +667,7 @@ def process(job, payload, id=None):
             if path not in keep: os.remove(path)
 
 STATUS_FIELDS = ('status', 'duration', 'error', 'files', 'meta')
-CONTENT_TYPES = {'.mp4': 'video/mp4', '.jpg': 'image/jpeg'}
+CONTENT_TYPES = {'.mp4': 'video/mp4', '.jpg': 'image/jpeg', '.mp3': 'audio/mpeg'}
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass

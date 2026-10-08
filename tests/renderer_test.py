@@ -629,4 +629,80 @@ class HttpTest(RendererTest):
         self.assertFalse(os.path.exists(directory))
         self.assertEqual(self.call('GET', f'/jobs/{id}')[0], 404)
 
+class AudioTest(RendererTest):
+    """'audio': an upload's sound as mono 16 kHz MP3 parts for speech recognition (part n starts at n * part seconds)."""
+    @classmethod
+    def setUpClass(cls):
+        # 25 s of a tone that sounds only from 10.0 to 10.5 s (the second part's first half second), with a picture.
+        make('talk.mp4', '-f','lavfi','-i','color=c=gray:s=320x180:r=30:d=25','-f','lavfi','-i','sine=frequency=440:duration=25',
+             '-af',"volume=0:enable='not(between(t,10,10.5))'",'-c:v','libx264','-threads','1','-pix_fmt','yuv420p','-c:a','aac','-shortest')
+        make('quiet.mp4', '-f','lavfi','-i','color=c=gray:s=320x180:r=30:d=3','-f','lavfi','-i','anullsrc=r=44100:cl=stereo',
+             '-t','3','-c:v','libx264','-threads','1','-pix_fmt','yuv420p','-c:a','aac')
+
+    def audio(self, name, **changes):
+        return run({'operation': 'audio', 'url': FIXTURES.upload_url(name), 'part': 10, **changes})
+
+    def test_parts_are_mono_16khz_mp3_cut_on_the_part_grid(self):
+        job = self.audio('talk.mp4')
+        self.assertEqual((job['status'], job['files']), ('completed', 3), job)
+        self.assertAlmostEqual(job['duration'], 25, delta=0.05)
+        self.assert_outputs_only(job)
+        lengths = []
+        for n, path in enumerate(job['outputs']):
+            self.assertTrue(path.endswith(f'output{n}.mp3'))
+            info = ffprobe(path)
+            stream = info['streams'][0]
+            self.assertEqual((info['format']['format_name'], stream['codec_name'], stream['sample_rate'], stream['channels']), ('mp3', 'mp3', '16000', 1))
+            self.assertLess(os.path.getsize(path), server.MAX_SPEECH_PART)
+            self.assert_decodes(path)
+            lengths.append(float(info['format']['duration']))
+        # MP3 frames (72 ms at 16 kHz) and the encoder's padding add a little to each part's stated length.
+        for got, want in zip(lengths, (10, 10, 5)): self.assertAlmostEqual(got, want, delta=0.15)
+        # The tone at 10.0-10.5 s opens part 1 and is not in part 0: the parts start exactly on the grid.
+        self.assertGreater(loudness(job['outputs'][1], 0.05, 0.4), -30)
+        self.assertLess(loudness(job['outputs'][1], 0.7, 2), -60)
+        self.assertLess(loudness(job['outputs'][0], 9.2, 0.7), -60)
+        # A larger part size gives fewer parts; the default is used when none is asked for.
+        self.assertEqual(self.audio('talk.mp4', part=180)['files'], 1)
+        self.assertEqual(run({'operation': 'audio', 'url': FIXTURES.upload_url('voice.wav')})['files'], 1)
+
+    def test_silence_has_no_parts_and_files_without_sound_are_named(self):
+        quiet = self.audio('quiet.mp4')
+        self.assertEqual((quiet['status'], quiet['files'], quiet['outputs']), ('completed', 0, []))
+        self.assertAlmostEqual(quiet['duration'], 3, delta=0.1)
+        self.assertEqual(os.listdir(quiet['dir']), [])
+        for name, code in (('mute.mp4', 'MEDIA_NO_AUDIO'), ('photo.jpg', 'MEDIA_NO_AUDIO'), ('long.wav', 'MEDIA_TOO_LONG'), ('broken.bin', 'MEDIA_FORMAT')):
+            self.assert_fails({'operation': 'audio', 'url': FIXTURES.upload_url(name), 'part': 10}, code, network=True)
+
+    def test_invalid_audio_payloads_fail_before_any_download(self):
+        url = FIXTURES.upload_url('talk.mp4')
+        for payload in ({'url': url, 'part': 5}, {'url': url, 'part': 181}, {'url': url, 'part': '20'}, {'url': url, 'part': True},
+                        {'url': 'https://attacker.example' + url.split(FIXTURES.origin, 1)[1], 'part': 10}, {'url': None}, {}):
+            self.assert_fails({'operation': 'audio', **payload}, 'MEDIA_INVALID')
+
+    def test_parts_are_served_as_mp3(self):
+        httpd = ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        base = f'http://127.0.0.1:{httpd.server_address[1]}'
+        id = '33333333-2222-4333-8444-555555555555'
+        try:
+            body = json.dumps({'id': id, 'operation': 'audio', 'url': FIXTURES.upload_url('voice.wav'), 'part': 60}).encode()
+            with NO_PROXY.open(urllib.request.Request(f'{base}/jobs', data=body, method='POST'), timeout=30) as r: self.assertEqual(r.status, 202)
+            deadline = time.time() + 60
+            while time.time() < deadline:
+                with NO_PROXY.open(f'{base}/jobs/{id}', timeout=30) as r: status = json.loads(r.read())
+                if status['status'] != 'running': break
+                time.sleep(0.1)
+            self.assertEqual(status['status'], 'completed')
+            self.assertEqual(status['files'], 1)
+            with NO_PROXY.open(f'{base}/jobs/{id}/file/0', timeout=30) as r:
+                self.assertEqual(r.headers['Content-Type'], 'audio/mpeg')
+                data = r.read()
+                self.assertTrue(data[:3] == b'ID3' or data[0] == 0xff, data[:4])
+        finally:
+            httpd.shutdown(); httpd.server_close()
+            with server.LOCK:
+                for job in server.JOBS.values(): shutil.rmtree(job['dir'], ignore_errors=True)
+                server.JOBS.clear()
+
 if __name__ == '__main__': unittest.main()

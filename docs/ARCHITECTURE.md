@@ -43,6 +43,24 @@ in `shared/` (formats/specs, plans and credits, captions and on-screen text layo
 4. **Review.** Blitz lists ready, pending posts. Approving can auto-schedule (`autoSchedule` in
    `server/publishing.ts`).
 
+**Text, captions and subtitles** are one description shared by the render and the editor's preview. On-screen
+text (`TextLook`) has an optional entrance animation (none, fade, pop, rise, words) that `overlayItems` writes as
+keyframes on the caption items, from each block's start; libass gets them as `\move`/`\t` events and the browser
+draws the same items on a canvas (`src/app/caption-canvas.ts`, ported from rech-bg) with the same fonts. All but the
+word-by-word reveal are over within 0.6 s; that one is paced to the text and done by 40% of the block. Stills are
+drawn without animation and the cover is taken once the first text is fully shown. AI UGC captions use one of the
+twenty caption styles (`captionStyle`); the writer picks one per post and never repeats one within a batch.
+
+**Speech in uploads.** After an uploaded video or track is checked, one with sound and at most 10 minutes long is
+transcribed (`server/speech.ts`): the renderer's `audio` operation cuts its sound into mono 16 kHz MP3 parts of
+120 s, and Workers AI `@cf/openai/whisper-large-v3-turbo` hears each part (base64 `audio`, `vad_filter`); the words
+of `segments[].words` (offset by the part's start) are kept in `media_assets.meta.transcript`, at most 2,000. The
+renderer reads the ready file through its own capability token (an hour at most). It is free, limited to 30 files
+per person and day (and "Find speech" for older uploads to 10 an hour); any failure only means no subtitles. A hook
+& demo or a wall of text whose own clip keeps its sound can switch on `subtitles` (off by default): the plan places
+the words heard in the used part of the clip (`demo.start` + `seconds`, or each loop of the clip) on the output clock
+and burns them in the chosen caption style. The writer switches them on when its demo has speech.
+
 Paid provider calls are made once. A claim is stored in `runs.provider` before the call and the ticket right after,
 so a retried step polls instead of paying again. A claim without a ticket fails the run; the exception is HeyGen,
 which is re-sent with the same `Idempotency-Key`. A failed run is refunded exactly once by the `run_refund` trigger.
