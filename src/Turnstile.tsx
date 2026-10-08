@@ -18,6 +18,8 @@ export function Turnstile({
   onToken: (s: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const token = useRef(onToken);
+  token.current = onToken;
   useEffect(() => {
     let cancelled = false,
       id: string | undefined;
@@ -25,8 +27,8 @@ export function Turnstile({
       if (!cancelled && ref.current && window.turnstile)
         id = window.turnstile.render(ref.current, {
           sitekey: siteKey,
-          callback: onToken,
-          "expired-callback": () => onToken(""),
+          callback: (t: string) => token.current(t),
+          "expired-callback": () => token.current(""),
           theme: "light",
         });
     };

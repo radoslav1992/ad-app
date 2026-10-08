@@ -562,7 +562,7 @@ export function Legal({ page }: { page: "terms" | "privacy" }) {
   const updated = formatDate(publicPages[isTerms ? "/terms" : "/privacy"].updated);
   return (
     <div className="wrap narrow">
-      <header className="page-head">
+      <header className="pub-head">
         <span className="kicker">Legal</span>
         <h1>{isTerms ? "Terms of Service" : "Privacy Policy"}</h1>
         <p className="lead">Last updated {updated}</p>

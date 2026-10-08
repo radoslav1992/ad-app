@@ -1,6 +1,6 @@
-.blitz { max-width: 1320px; }
+.blitz { max-width: 1320px; overflow-x: clip; --card-w: clamp(240px, calc((100dvh - 370px) * 9 / 16), 380px); }
 .blitz-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; min-height: 42px; }
-.blitz-stage { display: grid; grid-template-columns: 260px minmax(320px, 380px) 260px; gap: 40px; justify-content: center; align-items: start; }
+.blitz-stage { display: grid; grid-template-columns: 260px var(--card-w) 260px; gap: 40px; justify-content: center; align-items: start; }
 .built-on, .post-text { background: #fff; border: 1px solid var(--line); border-radius: 18px; padding: 18px; margin-top: 72px; display: flex; flex-direction: column; gap: 8px; }
 .built-on h2, .post-text h2 { font-size: 15px; font-family: var(--font); letter-spacing: 0; }
 .built-on .template { font-family: var(--display); font-size: 18px; line-height: 1.25; }
@@ -29,4 +29,4 @@
 .tutorial-card p { font-size: 17px; }
 .tutorial .wave { animation: wave 1.6s ease-in-out infinite; }
 @keyframes wave { 0%, 100% { transform: translateX(-24px) rotate(-8deg); } 50% { transform: translateX(24px) rotate(8deg); } }
-@media (max-width: 1100px) { .blitz-stage { grid-template-columns: minmax(280px, 380px); } .built-on, .post-text { display: none; } }
+@media (max-width: 1100px) { .blitz-stage { grid-template-columns: min(100%, var(--card-w)); } .built-on, .post-text { display: none; } }

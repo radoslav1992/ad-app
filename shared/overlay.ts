@@ -34,7 +34,7 @@ export const defaultLook = (): TextLook => ({ ...textPresets.classic.look });
 /** Letters the renderer's fonts cannot draw (emoji, pictographs) are removed from on-screen text. */
 export function screenText(text: string) {
   return text
-    .replace(/[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{FE0F}\u{200D}]/gu, "")
+    .replace(/\p{Extended_Pictographic}|[\u{1F1E6}-\u{1F1FF}]|\u{FE0F}|\u{200D}/gu, "")
     .replace(/[ \t]+/g, " ")
     .replace(/ *\n */g, "\n")
     .replace(/\n{2,}/g, "\n")

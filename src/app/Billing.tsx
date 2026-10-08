@@ -9,6 +9,9 @@ import { formatDate, useSignedInUser } from "./pickers";
 import "./pages.css";
 
 const rank = (id: string) => plans.findIndex((p) => p.id === id);
+/** The register page remembers the plan someone picked on the pricing page under this key. */
+const SIGNUP_PLAN = "pl-signup-plan";
+const isPaidPlan = (id: string | null): id is PaidPlanId => !!id && (paidPlans as readonly string[]).includes(id);
 
 /** Plans & billing: the current plan and usage, plan changes through Stripe Checkout / Customer Portal, AI prices. */
 export function BillingPage() {
@@ -19,6 +22,24 @@ export function BillingPage() {
   const [params, setParams] = useSearchParams();
   const [busy, setBusy] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+
+  // A plan picked on the pricing page (?plan=, or remembered through sign-up): highlight it, never start checkout.
+  const [wanted] = useState<PaidPlanId | null>(() => {
+    let stored: string | null = null;
+    try { stored = localStorage.getItem(SIGNUP_PLAN); } catch { /* storage unavailable */ }
+    const pick = params.get("plan");
+    return isPaidPlan(pick) ? pick : isPaidPlan(stored) ? stored : null;
+  });
+  const highlight = wanted && wanted !== user.plan ? wanted : null;
+  const wantedCard = useRef<HTMLElement>(null);
+  useEffect(() => {
+    try { localStorage.removeItem(SIGNUP_PLAN); } catch { /* storage unavailable */ }
+  }, []);
+  useEffect(() => {
+    if (!highlight) return;
+    const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    wantedCard.current?.scrollIntoView({ behavior: still ? "auto" : "smooth", block: "center" });
+  }, [highlight]);
 
   // Back from Stripe: re-read the subscription, then the account (once, even in development's double effects).
   const handled = useRef(false);
@@ -133,6 +154,7 @@ export function BillingPage() {
           <div>
             <h2 id="plans-title">{free ? "Choose a plan" : "Change plan"}</h2>
             <p>{PRICE_NOTE} Cancel any time.</p>
+            {highlight && <p role="status" style={{ color: "var(--text)" }}>You picked <strong>{planById(highlight).name}</strong>. Check the details below and continue when you're ready.</p>}
           </div>
         </div>
         <div className="plan-grid">
@@ -143,10 +165,11 @@ export function BillingPage() {
             const label = !enabled ? "Payments open soon" : current ? "Current plan" : up || !user.hasSubscription ? `Upgrade to ${p.name}` : `Switch to ${p.name}`;
             const working = busy === p.id || busy === `portal-${p.id}`;
             return (
-              <article key={p.id} className={`card plan-card${current ? " current" : ""}${p.id === "growth" ? " popular" : ""}`} aria-labelledby={`plan-${p.id}`}>
+              <article key={p.id} ref={p.id === highlight ? wantedCard : undefined} aria-labelledby={`plan-${p.id}`}
+                className={`card plan-card${current ? " current" : ""}${p.id === "growth" ? " popular" : ""}${p.id === highlight ? " wanted" : ""}`}>
                 <div className="row between">
                   <h3 id={`plan-${p.id}`} style={{ fontSize: 20 }}>{p.name}</h3>
-                  {current ? <span className="chip green">Your plan</span> : p.id === "growth" ? <span className="chip orange">Most popular</span> : null}
+                  {current ? <span className="chip green">Your plan</span> : p.id === highlight ? <span className="chip violet">Your pick</span> : p.id === "growth" ? <span className="chip orange">Most popular</span> : null}
                 </div>
                 <div className="plan-price">${p.price}<small> /month</small></div>
                 <p className="muted small">{p.description}</p>

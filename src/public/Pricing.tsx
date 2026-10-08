@@ -100,7 +100,7 @@ export function Pricing() {
   return (
     <>
       <div className="wrap">
-        <header className="page-head center">
+        <header className="pub-head center">
           <span className="kicker">Pricing</span>
           <h1>Plans for every posting pace</h1>
           <p className="lead">Start with a free {TRIAL_DAYS}-day trial, no credit card needed. Pick a plan when you want to publish every day.</p>
@@ -117,7 +117,7 @@ export function Pricing() {
         <p className="price-note">{PRICE_NOTE}</p>
       </div>
 
-      <section className="section tight" aria-labelledby="includes-title">
+      <section className="pub-section tight" aria-labelledby="includes-title">
         <div className="wrap split">
           <div className="copy">
             <span className="kicker">In every plan</span>
@@ -134,9 +134,9 @@ export function Pricing() {
         </div>
       </section>
 
-      <section className="section tight" aria-labelledby="compare-title">
+      <section className="pub-section tight" aria-labelledby="compare-title">
         <div className="wrap">
-          <div className="section-head">
+          <div className="pub-section-head">
             <span className="kicker">Compare</span>
             <h2 className="title" id="compare-title">Plans side by side</h2>
           </div>
@@ -161,9 +161,9 @@ export function Pricing() {
         </div>
       </section>
 
-      <section className="section tight" aria-labelledby="credits-title">
+      <section className="pub-section tight" aria-labelledby="credits-title">
         <div className="wrap">
-          <div className="section-head">
+          <div className="pub-section-head">
             <span className="kicker">AI credits</span>
             <h2 className="title" id="credits-title">What AI work costs</h2>
             <p className="sub">Credits come with your plan each month. Posts without AI extras cost no credits at all.</p>
@@ -189,9 +189,9 @@ export function Pricing() {
         </div>
       </section>
 
-      <section className="section tight" aria-labelledby="pricing-faq-title">
+      <section className="pub-section tight" aria-labelledby="pricing-faq-title">
         <div className="wrap">
-          <div className="section-head center">
+          <div className="pub-section-head center">
             <span className="kicker">FAQ</span>
             <h2 className="title" id="pricing-faq-title">Posts, credits and the trial</h2>
           </div>

@@ -191,7 +191,8 @@
 .plan-card.current { border: 2px solid var(--navy); }
 .plan-card.popular::before { content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 2px; background: linear-gradient(90deg, #f26b1d, #e5484d, #7c5cff);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; }
-.plan-card.current.popular::before { display: none; }
+.plan-card.current.popular::before, .plan-card.wanted::before { display: none; }
+.plan-card.wanted { border-color: var(--violet); box-shadow: 0 0 0 3px color-mix(in srgb, var(--violet) 35%, transparent), var(--shadow); scroll-margin: 80px; }
 .plan-price { font-family: var(--display); font-size: 38px; font-weight: 800; letter-spacing: -0.03em; line-height: 1; }
 .plan-price small { font-size: 15px; color: var(--muted); font-weight: 500; font-family: var(--font); letter-spacing: 0; }
 .plan-features { display: flex; flex-direction: column; gap: 8px; font-size: 14px; }

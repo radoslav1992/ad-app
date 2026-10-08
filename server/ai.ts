@@ -46,6 +46,7 @@ export function readJson(result: unknown): unknown {
 export function clean(text: unknown, max: number) {
   return String(text ?? "")
     .replace(/<[^>]*>/g, "")
+    // eslint-disable-next-line no-control-regex -- removing control characters is the point
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
     .replace(/[ \t]{2,}/g, " ")
     .trim()

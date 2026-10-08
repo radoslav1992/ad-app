@@ -76,7 +76,7 @@ function PhoneMockup() {
     <div className="hero-visual" role="img" aria-label="Example post: a slideshow with bold on-screen text, waiting for approval and scheduled for Tuesday morning.">
       <div className="ph-back one" />
       <div className="ph-back two" />
-      <div className="phone">
+      <div className="pub-phone">
         <div className="phone-screen">
           <div className="ph-shape a" />
           <div className="ph-shape b" />
@@ -95,8 +95,8 @@ function PhoneMockup() {
         </div>
       </div>
       <div className="float f1">
-        <span className="round no"><X size={16} /></span>
-        <span className="round yes"><Check size={16} /></span>
+        <span className="pub-round no"><X size={16} /></span>
+        <span className="pub-round yes"><Check size={16} /></span>
         <span>Swipe to approve<small>Blitz review</small></span>
       </div>
       <div className="float f2">
@@ -286,17 +286,17 @@ export function Landing() {
         <PhoneMockup />
       </section>
 
-      <section className="section" id="how-it-works" aria-labelledby="how-title" tabIndex={-1}>
+      <section className="pub-section" id="how-it-works" aria-labelledby="how-title" tabIndex={-1}>
         <div className="wrap">
-          <div className="section-head center">
+          <div className="pub-section-head center">
             <span className="kicker">How it works</span>
             <h2 className="title" id="how-title">From link to schedule in three steps</h2>
           </div>
-          <ol className="steps">
+          <ol className="pub-steps">
             {steps.map((s, i) => (
               <li key={s.title} className="frost tight step">
                 <div className="step-top">
-                  <span className="icon-tile navy"><s.icon size={22} aria-hidden="true" /></span>
+                  <span className="pub-icon navy"><s.icon size={22} aria-hidden="true" /></span>
                   <span className="step-num" aria-hidden="true">{String(i + 1).padStart(2, "0")}</span>
                 </div>
                 <h3>{s.title}</h3>
@@ -307,9 +307,9 @@ export function Landing() {
         </div>
       </section>
 
-      <section className="section" id="features" aria-labelledby="formats-title" tabIndex={-1}>
+      <section className="pub-section" id="features" aria-labelledby="formats-title" tabIndex={-1}>
         <div className="wrap">
-          <div className="section-head center">
+          <div className="pub-section-head center">
             <span className="kicker">Five formats</span>
             <h2 className="title" id="formats-title">The formats that work on short-form, made for you</h2>
             <p className="sub">Mix them freely. Each post comes with its caption, hashtags and title for every network.</p>
@@ -318,7 +318,7 @@ export function Landing() {
         </div>
       </section>
 
-      <section className="section" aria-labelledby="blitz-title">
+      <section className="pub-section" aria-labelledby="blitz-title">
         <div className="wrap split">
           <div className="copy">
             <span className="kicker">Blitz</span>
@@ -358,16 +358,16 @@ export function Landing() {
         </div>
       </section>
 
-      <section className="section" aria-labelledby="more-title">
+      <section className="pub-section" aria-labelledby="more-title">
         <div className="wrap">
-          <div className="section-head center">
+          <div className="pub-section-head center">
             <span className="kicker">Everything around the posts</span>
             <h2 className="title" id="more-title">Set it up once. Keep posting.</h2>
           </div>
           <div className="features">
             <article className="glass feature wide">
               <div className="copy">
-                <span className="icon-tile"><CalendarClock size={22} aria-hidden="true" /></span>
+                <span className="pub-icon"><CalendarClock size={22} aria-hidden="true" /></span>
                 <h3>Calendar and auto-publishing</h3>
                 <p>
                   Connect your accounts and pick your posting times. Approved posts are published for you, as videos or as photo carousels where the network
@@ -392,7 +392,7 @@ export function Landing() {
               </div>
             </article>
             <article className="glass feature">
-              <span className="icon-tile"><UserRound size={22} aria-hidden="true" /></span>
+              <span className="pub-icon"><UserRound size={22} aria-hidden="true" /></span>
               <h3>AI UGC creators</h3>
               <p>
                 Pick a creator from the library, or make your own from a photo of someone who has agreed to it. They speak your script with a natural AI voice
@@ -400,7 +400,7 @@ export function Landing() {
               </p>
             </article>
             <article className="glass feature">
-              <span className="icon-tile"><Repeat size={22} aria-hidden="true" /></span>
+              <span className="pub-icon"><Repeat size={22} aria-hidden="true" /></span>
               <h3>Automations</h3>
               <p>
                 Turn on daily posts and fresh ones are waiting for you every morning, in the formats you chose. You decide whether automations may spend AI
@@ -408,7 +408,7 @@ export function Landing() {
               </p>
             </article>
             <article className="glass feature">
-              <span className="icon-tile"><Palette size={22} aria-hidden="true" /></span>
+              <span className="pub-icon"><Palette size={22} aria-hidden="true" /></span>
               <h3>Brand profile</h3>
               <p>
                 Your product, audience, tone of voice, colours and logo in one place, filled in from your website. Edit it whenever you like; every new post
@@ -416,7 +416,7 @@ export function Landing() {
               </p>
             </article>
             <article className="glass feature">
-              <span className="icon-tile"><Wand2 size={22} aria-hidden="true" /></span>
+              <span className="pub-icon"><Wand2 size={22} aria-hidden="true" /></span>
               <h3>AI Studio</h3>
               <p>
                 Make AI images for slides and backgrounds and create new AI creators, then use them in any post. Everything you make is yours to use
@@ -427,9 +427,9 @@ export function Landing() {
         </div>
       </section>
 
-      <section className="section" aria-labelledby="plans-title">
+      <section className="pub-section" aria-labelledby="plans-title">
         <div className="wrap">
-          <div className="section-head center">
+          <div className="pub-section-head center">
             <span className="kicker">Pricing</span>
             <h2 className="title" id="plans-title">Start free. Upgrade when it works for you.</h2>
             <p className="sub">Every plan has every format. Paid plans add more posts, AI credits, workspaces and auto-publishing.</p>
@@ -452,9 +452,9 @@ export function Landing() {
         </div>
       </section>
 
-      <section className="section" id="faq" aria-labelledby="faq-title" tabIndex={-1}>
+      <section className="pub-section" id="faq" aria-labelledby="faq-title" tabIndex={-1}>
         <div className="wrap">
-          <div className="section-head center">
+          <div className="pub-section-head center">
             <span className="kicker">FAQ</span>
             <h2 className="title" id="faq-title">Questions, answered</h2>
           </div>
@@ -472,7 +472,7 @@ export function Landing() {
         </div>
       </section>
 
-      <section className="section" aria-labelledby="cta-title">
+      <section className="pub-section" aria-labelledby="cta-title">
         <div className="wrap">
           <div className="gradient-border cta-band">
             <div>

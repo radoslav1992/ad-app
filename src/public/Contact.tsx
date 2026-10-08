@@ -66,7 +66,7 @@ export function Contact() {
 
   return (
     <div className="wrap">
-      <header className="page-head">
+      <header className="pub-head">
         <span className="kicker">Contact</span>
         <h1>Get in touch</h1>
         <p className="lead">Questions about {PRODUCT.name}, billing, partnerships or something that needs our attention — write to us and we'll reply by email.</p>
@@ -75,7 +75,7 @@ export function Contact() {
         <div className="frost contact-card">
           {sent ? (
             <div className="stack center" role="status" ref={done} tabIndex={-1}>
-              <span className="icon-tile navy" style={{ margin: "0 auto" }}><CircleCheck size={24} aria-hidden="true" /></span>
+              <span className="pub-icon navy" style={{ margin: "0 auto" }}><CircleCheck size={24} aria-hidden="true" /></span>
               <h2 style={{ color: "#11151f", fontSize: 26 }}>Message sent</h2>
               <p>Thanks for writing. We'll reply to <strong>{sent}</strong> as soon as we can.</p>
               <div className="center-row">

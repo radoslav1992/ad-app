@@ -96,6 +96,7 @@ p { margin: 0; }
 /* Forms */
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field > span, .label { font-weight: 600; font-size: 14px; color: #3a4252; display: flex; align-items: center; gap: 8px; }
+.field > .hint { display: block; font-weight: 400; font-size: 13px; color: var(--muted); }
 .input, .select, .textarea { width: 100%; border: 1px solid var(--line-2); background: #fff; border-radius: 14px; padding: 12px 14px; font-size: 15px; outline: none; transition: border 0.15s, box-shadow 0.15s; }
 .input:focus, .select:focus, .textarea:focus { border-color: var(--navy); box-shadow: 0 0 0 4px rgba(30, 36, 51, 0.08); }
 .textarea { resize: vertical; min-height: 90px; line-height: 1.45; }

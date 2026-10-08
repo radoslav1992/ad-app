@@ -16,26 +16,37 @@ export function Logo({ to = "/", light = false }: { to?: string; light?: boolean
   );
 }
 
+/** Dialogs open at once (a picker over a dialog): the page scrolls again when the last one closes. */
+let openModals = 0;
 export function Modal({ title, onClose, children, footer, wide = false }: { title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
+  // The latest onClose, without re-running the focus effect when a parent passes a new function each render.
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     ref.current?.focus();
-    const key = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    // Only the top-most dialog closes on Escape.
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const dialogs = document.querySelectorAll(".modal-backdrop");
+      if (dialogs[dialogs.length - 1]?.contains(ref.current)) close.current();
+    };
     window.addEventListener("keydown", key);
+    openModals++;
     document.body.style.overflow = "hidden";
     return () => {
       window.removeEventListener("keydown", key);
-      document.body.style.overflow = "";
+      if (--openModals === 0) document.body.style.overflow = "";
       previous?.focus?.();
     };
-  }, [onClose]);
+  }, []);
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) close.current(); }}>
       <div className={`modal${wide ? " wide" : ""}`} role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : undefined} tabIndex={-1} ref={ref}>
         <div className="modal-head">
           <h2>{title}</h2>
-          <button className="btn icon ghost" onClick={onClose} aria-label="Close"><X size={20} /></button>
+          <button className="btn icon ghost" onClick={() => close.current()} aria-label="Close"><X size={20} /></button>
         </div>
         <div className="modal-body">{children}</div>
         {footer && <div className="modal-foot">{footer}</div>}

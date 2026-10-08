@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Plus, RefreshCw, Shuffle, Sparkles, Trash2, Wand2, ChevronLeft, ChevronRight, Lightbulb, Save, VolumeX, Volume2 } from "lucide-react";
-import { api, errorText, fileUrl, newKey, post, put, useAuth, type Asset, type Character, type LibraryItem, type Post } from "../lib";
+import { api, errorText, newKey, post, put, useAuth, type Asset, type Character, type LibraryItem, type Post } from "../lib";
 import { useCurrentWorkspace } from "./workspace";
 import { TextPreview } from "./PostView";
 import { MediaPicker, LibraryPicker } from "./pickers";

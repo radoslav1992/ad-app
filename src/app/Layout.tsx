@@ -21,6 +21,12 @@ export function AppLayout() {
   const navigate = useNavigate();
   const toast = useToast();
   useEffect(() => setOpen(false), [pathname]);
+  useEffect(() => {
+    if (!open) return;
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [open]);
   if (!user) return null;
   if (loading) return <div className="loading-page" role="status">Loading…</div>;
   if (!workspaces.length || !user.onboarding.completedAt) return <Navigate to="/app/onboarding" replace />;
@@ -88,10 +94,11 @@ export function AppLayout() {
         <div style={{ flex: 1 }} />
         <button className="nav-item" style={{ background: "none", border: 0, cursor: "pointer", width: "100%" }} onClick={logout}><LogOut size={20} /><span className="text">Log out</span></button>
       </aside>
+      {open && <div className="sidebar-scrim" role="presentation" onClick={() => setOpen(false)} />}
       <div className="main">
         <header className={`topbar${free ? "" : " plain"}`}>
           <div className="row">
-            <button className="btn icon ghost mobile-only" onClick={() => setOpen(!open)} aria-label="Menu" style={{ display: "none" }}><Menu size={20} /></button>
+            <button className="btn icon ghost mobile-only" onClick={() => setOpen(!open)} aria-label="Menu" aria-expanded={open} style={{ display: "none" }}><Menu size={20} /></button>
             {free ? (
               <span className="trial"><Clock size={18} aria-hidden="true" /> Free trial <span className="muted">· {user.trialEnded || !user.trialEndsAt ? "ended" : timeLeft(user.trialEndsAt)}</span></span>
             ) : (
