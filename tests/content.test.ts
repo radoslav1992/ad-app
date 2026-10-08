@@ -307,3 +307,30 @@ describe("render plan", () => {
     expect(() => planRender(specSchema.parse({ format: "text", text: "x", background: { assetId: crypto.randomUUID() } }), ctx)).toThrow("MEDIA_INPUT");
   });
 });
+
+describe("ideas to specs", () => {
+  const catalog = {
+    images: [{ ref: "img1", id: crypto.randomUUID(), name: "Screenshot" }],
+    videos: [{ ref: "vid1", id: crypto.randomUUID(), name: "Demo", seconds: 30 }],
+    clips: [{ ref: "clip1", id: crypto.randomUUID(), name: "Shocked", tags: "reaction, woman", seconds: 3 }],
+    greens: [{ ref: "gs1", id: crypto.randomUUID(), name: "Pointing", tags: "", seconds: 6 }],
+    music: [{ ref: "music1", id: crypto.randomUUID(), name: "Upbeat", tags: "" }],
+    characters: [{ ref: "char1", id: crypto.randomUUID(), name: "Mia", gender: "female", kind: "library" as const }],
+  };
+  const base = { format: "text", pattern: "pov", topic: "x", why: "y", text: "", slides: [], background: "", greenScreen: "", hookClip: "", demo: "", demoText: "", script: "", character: "", voice: "", music: "", caption: "c", hashtags: [], title: "" } as any;
+  const req = (useCredits: boolean) => ({ catalog, useCredits, caps: { aiMedia: true, talking: true }, mention: true, profile: { colors: { primary: "#112233" } } as any });
+  it("maps hook + demo, green screen and AI UGC concepts to valid specs", async () => {
+    const { conceptToSpec, feasible } = await import("../server/ideas");
+    const hd = conceptToSpec({ ...base, format: "hook_demo", text: "wait for it", hookClip: "clip1", demo: "vid1", demoText: "here's how", music: "music1" }, "hook_demo", req(false))!;
+    expect(hd).toMatchObject({ format: "hook_demo", hookClip: { libraryId: catalog.clips[0].id }, demo: { assetId: catalog.videos[0].id, seconds: 20 }, music: { trackId: catalog.music[0].id } });
+    // A talking hook needs credits; without them the library clip is used.
+    const talkingHook = conceptToSpec({ ...base, format: "hook_demo", text: "wait", hookClip: "say: you won't believe this", character: "char1", voice: "aria", demo: "vid1" }, "hook_demo", req(true))!;
+    expect(talkingHook.format === "hook_demo" && "characterId" in talkingHook.hookClip).toBe(true);
+    const gs = conceptToSpec({ ...base, format: "green_screen", text: "me when", greenScreen: "gs1", background: "img1" }, "green_screen", req(false))!;
+    expect(gs).toMatchObject({ clipId: catalog.greens[0].id, background: { assetId: catalog.images[0].id }, seconds: 6 });
+    const ugc = conceptToSpec({ ...base, format: "ugc", script: "Okay so [laughs] this app *literally* writes my notes. #obsessed", character: "char9", voice: "nobody" }, "ugc", req(true))!;
+    expect(ugc).toMatchObject({ characterId: catalog.characters[0].id, voiceId: "aria" });
+    expect(ugc.format === "ugc" && ugc.script).toBe("Okay so this app literally writes my notes. obsessed");
+    expect(feasible(["ugc", "hook_demo"], { ...catalog, videos: [] }, { aiMedia: false, talking: false }, false).ok).toEqual([]);
+  });
+});

@@ -36,15 +36,22 @@ dashboard), with its own name, logo and wording. No third-party branding, testim
 8. **Two ways to create content** — tabs *Blitz mode* (swipe through ready posts) | *Manual creation* (build a post
    yourself), each with a short explainer; **Continue to dashboard**.
 
-The reference has a testimonials step ("Loved by founders like you"). We show **How it works** instead until there
-are real customer quotes (never invented ones).
+The reference also has a testimonials step ("Loved by founders like you"). It is left out until there are real
+customer quotes to show (never invented ones); step 8 already explains how content gets made. After step 8 the app
+opens Blitz and starts the first batch of posts as soon as the brand analysis is ready.
 
 ## Dashboard
 
-- Left sidebar: workspace switcher (logo + name), collapse button; Home, Blitz, Inspiration, Automations, AI Studio,
-  Characters (AI UGC creators), Content, Library, Calendar; then Upgrade, Brand, Settings.
+- Left sidebar: workspace switcher (logo + name), collapse button; Home, Blitz, Create, Inspiration, Automations,
+  AI Studio, Creators (AI UGC), Content, Library, Calendar; then Upgrade, Brand, Accounts, Settings (and Admin).
 - Top bar: "Free trial · 6d 23h left" (or the plan and credits) and an **Upgrade** pill.
 - **Blitz**: one post card in the centre (9:16 video or slideshow, mute toggle), stacked behind it the next ones;
   above it tags (format, topic) and **Why this content?**; left panel "Built on" shows the hook pattern; bottom
   buttons ✕ (reject, ←), **Edit**, ✓ (accept, →); an Accept/Reject stamp while dragging; first-visit tutorial
-  overlay with a hand and **Got it**. Top right: **Configure** (formats, auto-schedule).
+  overlay with a hand and **Got it**. Top right: **Generate more** and **Configure** (formats, AI credits).
+  The reference's "Remixed From" panel shows the viral video a post copies; ours shows **Built on**: the proven hook
+  pattern (no third-party videos or view counts).
+- **Create** (manual creation, from the owner's demo video): format tabs (Slideshow, Wall of Text, Video Hook & Demo,
+  Green Screen Meme, AI UGC); left panel with Mode (Create new / Remix), "Mention your business?", media pickers
+  (video, audio, creator), style and prompt, **Generate**; right panel with Proven formats / Preview and an
+  inspector for the text (preset, weight, size, colour, stroke, box, position), swaps, slides and audio; **Save & build**.

@@ -214,7 +214,8 @@ export function conceptToSpec(k: Concept, format: FormatId, r: Pick<IdeaRequest,
     spec = { format, text, clipId: green.id, background: image(k.background || ""), look: lookFor(format), seconds: Math.min(12, Math.max(5, Math.round((green.seconds || 7)))), ...common };
   } else {
     const character = find(c.characters, k.character || "") || c.characters[0];
-    const script = clean(k.script, 900).replace(/\[[^\]]*\]|\([^)]*\)/g, "").replace(/[#*_~]/g, "").trim();
+    // Spoken text only: stage directions, markdown and hashtags are removed.
+    const script = clean(k.script, 900).replace(/\[[^\]]*\]|\([^)]*\)/g, "").replace(/[#*_~]/g, "").replace(/[ \t]{2,}/g, " ").trim();
     if (!character || script.length < 20) return null;
     const voice = voices.find((v) => v.id === k.voice) || voices.find((v) => v.gender === character.gender) || voices[0];
     spec = { format, characterId: character.id, voiceId: voice.id, script, hook: clean(k.text, 140), ...common };

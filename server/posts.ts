@@ -63,15 +63,15 @@ export function canCreate(a: Allowance, count = 1) {
     throw new HTTPException(402, { message: a.postsUsed >= a.postsLimit ? "You've used all the posts in your plan. Upgrade to keep creating." : `You have ${a.postsLimit - a.postsUsed} post(s) left in your plan.` });
 }
 /** Creates a post and its first run in one transaction (posts quota and credits are reserved by the triggers). */
-export async function createPost(env: Env, user: DbUser, workspaceId: string, spec: Spec, a: Allowance, key: string, batchId: string | null = null) {
+export async function createPost(env: Env, user: DbUser, workspaceId: string, spec: Spec, a: Allowance, key: string, batchId: string | null = null, approved = false) {
   requireMedia(env);
   const credits = specCredits(spec, await characterKind(env, user.id, spec));
   const postId = uid(), runId = uid(), t = now();
   try {
     await env.DB.batch([
       env.DB.prepare(
-        "INSERT INTO posts(id,user_id,workspace_id,window_id,batch_id,format,spec,hook,caption,title,render_status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,'queued',?,?)",
-      ).bind(postId, user.id, workspaceId, a.window, batchId, spec.format, JSON.stringify(spec), specHook(spec).slice(0, 300), spec.caption, spec.title, t, t),
+        "INSERT INTO posts(id,user_id,workspace_id,window_id,batch_id,format,spec,hook,caption,title,status,reviewed_at,render_status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'queued',?,?)",
+      ).bind(postId, user.id, workspaceId, a.window, batchId, spec.format, JSON.stringify(spec), specHook(spec).slice(0, 300), spec.caption, spec.title, approved ? "approved" : "pending", approved ? t : null, t, t),
       env.DB.prepare(
         "INSERT INTO runs(id,user_id,post_id,window_id,idempotency_key,kind,initial,credits,status,payload,created_at,updated_at) VALUES (?,?,?,?,?,'post',1,?,'queued',?,?,?)",
       ).bind(runId, user.id, postId, a.window, key, credits, JSON.stringify({ revision: 1 }), t, t),
@@ -144,7 +144,8 @@ posts.get("/", async (c) => {
   ).bind(q.workspace, user.id).first<any>();
   return c.json({ posts: rows.map((p) => postView(p)), counts: { blitz: counts?.blitz || 0, making: counts?.making || 0, approved: counts?.approved || 0, failed: counts?.failed || 0, total: counts?.total || 0 } });
 });
-const createSchema = z.object({ workspaceId: z.uuid(), spec: specSchema, idempotencyKey: z.uuid() });
+/** `approve`: a post made by hand is approved by its author (it skips Blitz). */
+const createSchema = z.object({ workspaceId: z.uuid(), spec: specSchema, idempotencyKey: z.uuid(), approve: z.boolean().default(false) });
 posts.post("/", async (c) => {
   const user = c.get("user");
   await rate(c, "post-create", 120, 3600, user.id);
@@ -156,7 +157,7 @@ posts.post("/", async (c) => {
   await checkReferences(c.env, user.id, spec);
   const a = await allowance(c.env, user);
   canCreate(a);
-  return c.json(await createPost(c.env, user, d.workspaceId, spec, a, d.idempotencyKey), 201);
+  return c.json(await createPost(c.env, user, d.workspaceId, spec, a, d.idempotencyKey, null, d.approve), 201);
 });
 /** The browser never sets generated recordings; they only come from the server's own runs. */
 function stripGenerated(spec: Spec): Spec {
