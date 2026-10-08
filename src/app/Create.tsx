@@ -504,7 +504,7 @@ function Inspector({ spec, look, setLook, slide, setSlide, onChange, pick, aiPro
     <div className="inspector stack">
       <div className="stack" style={{ gap: 10 }}>
         <strong className="small">Text</strong>
-        <div className="seg small-seg">
+        <div className="seg small-seg presets">
           {Object.entries(textPresets).map(([id, p]) => {
             // A preset changes the letters, not where the text sits or how it enters.
             const next = { ...p.look, position: look.position, animation: look.animation };

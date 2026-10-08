@@ -9,6 +9,9 @@
 .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; margin-top: 8px; }
 .seg button { border: 1px solid var(--line); background: #fff; border-radius: 12px; padding: 9px 10px; font-weight: 600; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; justify-content: center; font-size: 14px; }
 .seg button[aria-pressed="true"] { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+/* Four presets do not fit one row of the narrow inspector. */
+.seg.presets { grid-auto-flow: row; grid-template-columns: 1fr 1fr; }
+.seg button { min-width: 0; }
 .small-seg { margin-top: 0; }
 .small-seg button { padding: 6px 8px; font-size: 13px; border-radius: 10px; }
 .small-seg button[aria-pressed="true"] { background: var(--navy); border-color: var(--navy); }
