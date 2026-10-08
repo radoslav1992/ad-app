@@ -211,13 +211,14 @@ async function makePost(e: Env, step: WorkflowStep, run: RunInfo, phase: Phase) 
     await phase("saving");
     const s = await readState(e, run.id);
     const saved = s.assets || {};
+    // Files with AI pictures, clips or voices in them carry {"ai":true}, so publishing can disclose them.
     const store = async (name: string, job: "compose" | "stills", n: number, mime: string, kind: "render" | "slide", label: string, duration = 0) => {
       if (saved[name] && await e.DB.prepare("SELECT 1 FROM media_assets WHERE id=?").bind(saved[name]).first()) return saved[name];
       const assetId = uid(), key = mediaKey(run.user_id, assetId, extOf(mime));
       const bytes = await storeStream(e, key, await renderFile(e, s.slots![job], s.jobs![job], n), mime === "video/mp4" ? 400 * MB : 20 * MB, mime);
       await e.DB.prepare(
-        "INSERT INTO media_assets(id,user_id,workspace_id,post_id,kind,name,object_key,mime,bytes,duration,width,height,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,1080,1920,'ready',?,?)",
-      ).bind(assetId, run.user_id, workspace.id, postId, kind, label, key, mime, bytes, duration, now(), now()).run();
+        "INSERT INTO media_assets(id,user_id,workspace_id,post_id,kind,name,object_key,mime,bytes,duration,width,height,status,meta,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,1080,1920,'ready',?,?,?)",
+      ).bind(assetId, run.user_id, workspace.id, postId, kind, label, key, mime, bytes, duration, (job === "compose" ? plan.compose.synthetic : !!plan.stills?.synthetic) ? '{"ai":true}' : "{}", now(), now()).run();
       await patchState(e, run.id, (st) => { (st.assets ||= {})[name] = assetId; });
       saved[name] = assetId;
       return assetId;

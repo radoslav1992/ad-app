@@ -94,10 +94,12 @@ async function context(env: Env, { pub, post, account, platform }: Loaded): Prom
   const asPhotos = postsAsPhotos(post.format, platform);
   const ids = asPhotos ? json<unknown[]>(post.slides, []).slice(0, platforms[platform].photos?.max ?? 0) : [post.video_asset];
   const files: MediaFile[] = [];
+  let aiMedia = false;
   for (const [n, assetId] of ids.entries()) {
     const asset = typeof assetId === "string"
-      ? await env.DB.prepare("SELECT object_key,mime FROM media_assets WHERE id=? AND user_id=?").bind(assetId, pub.user_id).first<{ object_key: string; mime: string }>()
+      ? await env.DB.prepare("SELECT object_key,mime,meta FROM media_assets WHERE id=? AND user_id=?").bind(assetId, pub.user_id).first<{ object_key: string; mime: string; meta: string }>()
       : null;
+    if (asset && json<{ ai?: boolean }>(asset.meta, {}).ai) aiMedia = true;
     const head = asset ? await env.MEDIA.head(asset.object_key) : null;
     if (!asset || !head || !head.size) throw new SocialError("NOT_READY");
     files.push({
@@ -113,7 +115,7 @@ async function context(env: Env, { pub, post, account, platform }: Loaded): Prom
     account: { externalId: account.external_id, handle: account.handle },
     tokens,
     ...postText(post, platform),
-    synthetic: synthetic(post),
+    synthetic: synthetic(post) || aiMedia,
     media: asPhotos ? { kind: "photos", items: files } : { kind: "video", ...files[0], duration: Number(post.duration) || 0 },
     checkpoint: async (ticket: Ticket) => {
       const saved = await env.DB.prepare("UPDATE publications SET ticket=?,updated_at=? WHERE id=? AND status='publishing' AND attempts=?")

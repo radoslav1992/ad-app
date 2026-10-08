@@ -78,6 +78,8 @@ Auth, sessions, rate limits and Stripe come from rech-bg. Each paid period is a 
 - **Untrusted text:** website content, prompts and model answers are treated as data. Model output is cleaned and
   schema-validated before use.
 - **Logs:** provider messages are never logged or shown; failures become short codes with plain-English messages.
-- **AI marking:** AI-made media is marked in its MP4/JPEG metadata (IPTC digital source type).
+- **AI marking:** AI-made media is marked in its MP4/JPEG metadata (IPTC digital source type). The saved render also
+  carries `{"ai":true}` in `media_assets.meta`, which sets the networks' AI labels on publishing (TikTok `is_aigc`,
+  YouTube `containsSyntheticMedia`).
 - **Deletion:** deleting posts, files, creators or accounts queues R2 cleanup. Work in progress is protected by
   triggers.

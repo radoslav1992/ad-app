@@ -355,6 +355,24 @@ describe("publishing", () => {
     expect(calls.every((c) => c.redirect === "manual")).toBe(true);
   });
 
+  it("labels a post as AI-made when its rendered video contains AI media", async () => {
+    const s = await setup();
+    const account = await addAccount(s, "tiktok");
+    const post = await addPost(s, { videoBytes: 3000 });
+    s.sqlite.prepare("UPDATE media_assets SET meta='{\"ai\":true}' WHERE id=(SELECT video_asset FROM posts WHERE id=?)").run(post);
+    const pubId = addPublication(s, post, account, "tiktok");
+    const calls = mockFetch([
+      ["POST", "https://open.tiktokapis.com/v2/post/publish/creator_info/query/", tiktokCreator],
+      ["POST", "https://open.tiktokapis.com/v2/post/publish/video/init/", () =>
+        ok({ data: { publish_id: "v_pub_url~v2.9", upload_url: "https://open-upload.tiktokapis.com/video/?upload_id=9&upload_token=x" }, error: { code: "ok" } })],
+      ["PUT", "https://open-upload.tiktokapis.com/video/", () => new Response(null, { status: 201 })],
+      ["POST", "https://open.tiktokapis.com/v2/post/publish/status/fetch/", () => ok({ data: { status: "PUBLISH_COMPLETE", publicaly_available_post_id: ["1"] }, error: { code: "ok" } })],
+    ]);
+    expect((await publish(s, pubId)).status).toBe("published");
+    const init = jsonBody(calls.find((c) => c.url.pathname.endsWith("/video/init/"))!);
+    expect(init.post_info.is_aigc).toBe(true);
+  });
+
   it("posts a TikTok photo slideshow from our media links, privately when the app is unaudited", async () => {
     const s = await setup();
     const account = await addAccount(s, "tiktok");

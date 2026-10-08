@@ -250,6 +250,8 @@ describe("Blitz batch and the content run", () => {
     expect(compose.segments[0]).toMatchObject({ kind: "video", audio: 1 });
     expect(compose.ass).toContain("SCROLLING");
     expect(compose.synthetic).toBe(true);
+    // The saved video remembers that it holds AI media, for the networks' AI labels.
+    expect(sqlite.prepare("SELECT meta FROM media_assets WHERE id=?").get(post.videoAssetId)).toEqual({ meta: '{"ai":true}' });
     // A caption edit is saved without a new render or charge.
     const edit = await call(worker, env, "PUT", `/api/posts/${post.id}`, { spec: { ...post.spec, caption: "New caption", generated: undefined }, idempotencyKey: crypto.randomUUID() }, user.cookie);
     expect(edit.data.rendering).toBe(false);
