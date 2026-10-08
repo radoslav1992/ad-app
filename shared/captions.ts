@@ -48,6 +48,11 @@ export const demoWords: CaptionWord[] = [
   { text: "Stop", start: 0, end: .45 }, { text: "scrolling.", start: .45, end: 1.2 },
   { text: "This", start: 1.3, end: 1.6 }, { text: "changes", start: 1.6, end: 2.1 }, { text: "everything.", start: 2.1, end: 2.9 },
 ];
+/** Captions of `words` in one of the styles, as posts burn them in (1080 × 1920, the style's own accent and case). */
+export function styledCaptions(words: CaptionWord[], style: CaptionStyle, position: CaptionDocument["position"] = "bottom"): CaptionDocument {
+  const preset = captionPresets.find((p) => p.id === style);
+  return { words, style, format: "9:16", position, enabled: true, uppercase: preset?.uppercase ?? false, resolution: "1080p", accent: preset?.accent };
+}
 export function captionLook(document: CaptionDocument): CaptionLook {
   return {
     style: document.style, format: document.format, position: document.position, enabled: document.enabled,

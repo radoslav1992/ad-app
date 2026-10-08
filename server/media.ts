@@ -6,9 +6,11 @@ import { MB, now, uid } from "./types";
 import { dbFailure, json } from "./db";
 import { rate, safeEqual, token } from "./security";
 import { extOf, head, imageFits, imageInfo, mediaKey, serveObject } from "./storage";
+import { claimSpeech, mayHaveSpeech, speechView, storedTranscript } from "./speech";
 
 // The media library: uploads (images, videos, audio) in authenticated 8 MiB parts, website images and everything
-// generated for posts. Videos and audio are checked by the renderer (length, size, sound) before they can be used.
+// generated for posts. Videos and audio are checked by the renderer (length, size, sound) before they can be used,
+// then their speech is transcribed for subtitles (server/speech.ts).
 export const media = new Hono<App>();
 export const PART_SIZE = 8 * MB;
 const accepted: Record<string, { kind: "image" | "video" | "audio"; max: number }> = {
@@ -32,6 +34,8 @@ export function assetView(a: any) {
     id: a.id, kind: a.kind, name: a.name, mime: a.mime, bytes: a.bytes, duration: a.duration, width: a.width, height: a.height,
     status: a.status, workspaceId: a.workspace_id, hasAudio: meta.hasAudio ?? null, error: a.status === "failed" ? meta.error || "This file can't be used." : null,
     createdAt: a.created_at, url: `/api/media/${a.id}/file`,
+    // Speech found in an upload: "found", "none", "pending", "failed", or null when it was never looked for.
+    ...speechView(a),
   };
 }
 async function ownedAsset(env: Env, userId: string, id: string) {
@@ -140,7 +144,33 @@ export async function failAsset(env: Env, id: string, error: string) {
   await env.DB.prepare("UPDATE media_assets SET status='failed',bytes=0,meta=?,updated_at=? WHERE id=?")
     .bind(JSON.stringify({ ...json<any>(a?.meta, {}), error, token: undefined }), now(), id).run();
 }
-media.get("/:id", async (c) => c.json({ asset: assetView(await ownedAsset(c.env, c.get("user").id, c.req.param("id"))) }));
+media.get("/:id", async (c) => {
+  const a = await ownedAsset(c.env, c.get("user").id, c.req.param("id"));
+  // One file also brings its transcript (word timings for the subtitle preview); lists do not.
+  return c.json({ asset: { ...assetView(a), transcript: speechView(a).speech === "found" ? storedTranscript(a.meta) : null } });
+});
+/** "Find speech": transcribes an older upload (or one that failed before), free but limited per hour and day. */
+media.post("/:id/speech", async (c) => {
+  const user = c.get("user");
+  const a = await ownedAsset(c.env, user.id, c.req.param("id"));
+  const meta = json<any>(a.meta, {}), status = speechView(a).speech;
+  if (status === "found" || status === "pending") return c.json({ asset: assetView(a) });
+  if (a.status !== "ready" || !mayHaveSpeech(a, meta.hasAudio))
+    throw new HTTPException(400, { message: meta.hasAudio === false ? "This file has no sound." : "Speech can be found in your own videos and tracks up to 10 minutes long." });
+  if (status === "none") throw new HTTPException(409, { message: "We listened to this file already and heard no speech." });
+  if (!c.env.CONTENT || !c.env.MEDIA_RENDERER) throw new HTTPException(503, { message: "Finding speech isn't available right now. Please try again later." });
+  await rate(c, "speech", 10, 3600, user.id);
+  const next = await claimSpeech(c.env, user.id, meta);
+  if (!next) throw new HTTPException(429, { message: "You've looked for speech in a lot of files today. Try again tomorrow." });
+  await c.env.DB.prepare("UPDATE media_assets SET meta=?,updated_at=? WHERE id=?").bind(JSON.stringify(next), now(), a.id).run();
+  try {
+    await c.env.CONTENT.create({ id: `speech-${a.id}-${now()}`, params: { inspectId: a.id } });
+  } catch {
+    await c.env.DB.prepare("UPDATE media_assets SET meta=? WHERE id=?").bind(JSON.stringify({ ...meta, speech: { status: "failed", at: now() } }), a.id).run();
+    throw new HTTPException(503, { message: "Finding speech isn't available right now. Please try again later." });
+  }
+  return c.json({ asset: assetView(await ownedAsset(c.env, user.id, a.id)) }, 202);
+});
 media.get("/:id/file", async (c) => {
   const a = await ownedAsset(c.env, c.get("user").id, c.req.param("id"));
   if (a.status === "uploading" || a.status === "failed") throw new HTTPException(404, { message: "This file isn't available." });
@@ -171,12 +201,16 @@ media.delete("/:id", async (c) => {
   return c.json({ ok: true });
 });
 
-/** The renderer reads an upload it is checking through a capability link (token in the URL, while checking). */
+/**
+ * The renderer reads an upload it is checking through a capability link (token in the URL, while checking), or a
+ * ready one whose speech it is cutting out (its own token, for an hour at most).
+ */
 export const uploadInputs = new Hono<{ Bindings: Env }>();
 uploadInputs.get("/:id", async (c) => {
   const a = await c.env.DB.prepare("SELECT object_key,meta,status FROM media_assets WHERE id=?").bind(c.req.param("id")).first<any>();
-  const meta = json<any>(a?.meta, {});
-  if (!a || a.status !== "checking" || typeof meta.token !== "string" || !safeEqual(meta.token, c.req.query("token") || ""))
-    throw new HTTPException(404, { message: "Not found." });
+  const meta = json<any>(a?.meta, {}), given = c.req.query("token") || "";
+  const checking = a?.status === "checking" && typeof meta.token === "string" && safeEqual(meta.token, given);
+  const listening = a?.status === "ready" && typeof meta.listen?.token === "string" && meta.listen.until > now() && safeEqual(meta.listen.token, given);
+  if (!a || !(checking || listening)) throw new HTTPException(404, { message: "Not found." });
   return serveObject(c.env, a.object_key, c.req.header("Range"), "no-store");
 });

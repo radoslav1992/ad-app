@@ -4,7 +4,8 @@ import { aiJson, clean } from "./ai";
 import { json } from "./db";
 import { formats as formatInfo, specSchema, type FormatId, type Spec } from "../shared/formats";
 import { hookPatterns, writingStyles, type WritingStyle } from "../shared/hooks";
-import { textPresets, type TextLook } from "../shared/overlay";
+import { textAnimations, textPresets, type TextAnimation, type TextLook } from "../shared/overlay";
+import { captionPresets, captionStyles, type CaptionStyle } from "../shared/captions";
 import { voices } from "../shared/voices";
 import { emptyProfile, profileSchema, type Profile } from "../shared/profile";
 
@@ -13,14 +14,15 @@ import { emptyProfile, profileSchema, type Profile } from "../shared/profile";
 // Media is referenced by short codes (img3, clip2…) that the server maps back to IDs; anything that does not map
 // falls back to a safe choice, and every result is validated against the post schema.
 
-export type CatalogItem = { ref: string; id: string; name: string; tags?: string; seconds?: number; gender?: string; kind?: "library" | "custom" };
+export type CatalogItem = { ref: string; id: string; name: string; tags?: string; seconds?: number; gender?: string; kind?: "library" | "custom"; speech?: boolean };
 export type Catalog = { images: CatalogItem[]; videos: CatalogItem[]; clips: CatalogItem[]; greens: CatalogItem[]; music: CatalogItem[]; characters: CatalogItem[] };
 export type Capabilities = { aiMedia: boolean; talking: boolean };
 
 /** Everything the writer may use for this workspace (ready media only). */
 export async function loadCatalog(env: Env, userId: string, workspaceId: string): Promise<Catalog> {
+  // Only whether speech was found is read from the meta (not the transcript itself).
   const assets = (await env.DB.prepare(
-    "SELECT id,kind,name,mime,duration FROM media_assets WHERE user_id=? AND status='ready' AND post_id IS NULL AND (workspace_id=? OR workspace_id IS NULL) AND kind IN ('brand','upload','ai_image','ai_clip') ORDER BY created_at DESC LIMIT 200",
+    "SELECT id,kind,name,mime,duration,json_extract(meta,'$.speech.status') AS speech FROM media_assets WHERE user_id=? AND status='ready' AND post_id IS NULL AND (workspace_id=? OR workspace_id IS NULL) AND kind IN ('brand','upload','ai_image','ai_clip') ORDER BY created_at DESC LIMIT 200",
   ).bind(userId, workspaceId).all<any>()).results;
   const library = (await env.DB.prepare("SELECT id,kind,name,tags,duration FROM library_items WHERE active=1 ORDER BY created_at DESC LIMIT 300").all<any>()).results;
   const characters = (await env.DB.prepare(
@@ -30,7 +32,7 @@ export async function loadCatalog(env: Env, userId: string, workspaceId: string)
     rows.map((r, i) => ({ ref: `${prefix}${i + 1}`, id: r.id, name: String(r.name || "").slice(0, 80), ...map(r) }));
   return {
     images: items(assets.filter((a) => a.mime.startsWith("image/")).slice(0, 40), "img"),
-    videos: items(assets.filter((a) => a.mime.startsWith("video/") && a.kind === "upload").slice(0, 20), "vid", (r) => ({ seconds: r.duration })),
+    videos: items(assets.filter((a) => a.mime.startsWith("video/") && a.kind === "upload").slice(0, 20), "vid", (r) => ({ seconds: r.duration, speech: r.speech === "found" })),
     clips: items(library.filter((l) => l.kind === "clip").slice(0, 60), "clip", (r) => ({ tags: r.tags, seconds: r.duration })),
     greens: items(library.filter((l) => l.kind === "greenscreen").slice(0, 30), "gs", (r) => ({ tags: r.tags, seconds: r.duration })),
     music: items(library.filter((l) => l.kind === "music").slice(0, 40), "music", (r) => ({ tags: r.tags, seconds: r.duration })),
@@ -60,7 +62,7 @@ const conceptJson = {
       type: "array", maxItems: 12,
       items: {
         type: "object", additionalProperties: false,
-        required: ["format", "pattern", "topic", "why", "text", "slides", "background", "greenScreen", "hookClip", "demo", "demoText", "script", "character", "voice", "music", "caption", "hashtags", "title"],
+        required: ["format", "pattern", "topic", "why", "text", "slides", "background", "greenScreen", "hookClip", "demo", "demoText", "script", "character", "voice", "music", "caption", "hashtags", "title", "captionStyle", "animation"],
         properties: {
           format: { type: "string", enum: ["slideshow", "text", "hook_demo", "green_screen", "ugc"] },
           pattern: { type: "string" }, topic: { type: "string" }, why: { type: "string" }, text: { type: "string" },
@@ -68,6 +70,7 @@ const conceptJson = {
           background: { type: "string" }, greenScreen: { type: "string" }, hookClip: { type: "string" }, demo: { type: "string" }, demoText: { type: "string" },
           script: { type: "string" }, character: { type: "string" }, voice: { type: "string" }, music: { type: "string" },
           caption: { type: "string" }, hashtags: { type: "array", maxItems: 8, items: { type: "string" } }, title: { type: "string" },
+          captionStyle: { type: "string", enum: [...captionStyles] }, animation: { type: "string", enum: [...textAnimations] },
         },
       },
     },
@@ -77,6 +80,10 @@ export type Concept = {
   format: FormatId; pattern: string; topic: string; why: string; text: string; slides: { text: string; image: string }[];
   background: string; greenScreen: string; hookClip: string; demo: string; demoText: string; script: string;
   character: string; voice: string; music: string; caption: string; hashtags: string[]; title: string;
+  /** Caption look of AI UGC (and of a demo's subtitles); absent in answers written before it existed. */
+  captionStyle?: string;
+  /** How the on-screen text enters. */
+  animation?: string;
 };
 export type IdeaRequest = {
   profile: Profile; plan: FormatId[]; mention: boolean; prompt?: string; style?: WritingStyle; pattern?: string;
@@ -122,6 +129,12 @@ export async function writeConcepts(env: Env, r: IdeaRequest): Promise<Concept[]
     "caption: 1–3 short sentences for the post description (no hashtags in it; a soft call to action when mention is on). hashtags: 3–6, lowercase, no spaces." +
     " title: a YouTube Shorts title of at most 70 characters. topic: 2–4 words naming the subject. why: one sentence (at most 25 words) on why this post should work for this audience.",
     "music: a musicN that fits the mood, or empty.",
+    "animation: how the on-screen text enters. 'words' (word by word) suits a wall of text; 'pop' or 'rise' suit a short hook;" +
+    " 'fade' suits a calm or premium tone; 'none' for plain. Keep it tasteful and vary it across the posts.",
+    r.plan.some((f) => f === "ugc" || f === "hook_demo")
+      ? `captionStyle: the look of spoken captions (ugc, and a demo's subtitles), one of: ${captionPresets.map((p) => `${p.id} (${p.description.toLowerCase()})`).join(", ")}.` +
+        " Match the brand's tone (energetic: bold, karaoke, pop, bounce; calm or premium: classic, minimal, fade, luxe) and use a different one for each ugc post."
+      : "captionStyle: 'bold' (not used by these formats).",
     "Avoid repeating the recent hooks.",
   ].filter(Boolean).join("\n");
   const input = {
@@ -135,7 +148,7 @@ export async function writeConcepts(env: Env, r: IdeaRequest): Promise<Concept[]
     patterns: hookPatterns.map((p) => ({ id: p.id, template: p.template, formats: p.formats })),
     media: {
       images: c.images.map((i) => ({ code: i.ref, name: i.name })),
-      videos: c.videos.map((i) => ({ code: i.ref, name: i.name, seconds: i.seconds })),
+      videos: c.videos.map((i) => ({ code: i.ref, name: i.name, seconds: i.seconds, ...(i.speech && { speech: true }) })),
       clips: c.clips.map((i) => ({ code: i.ref, name: i.name, tags: i.tags })),
       greenScreens: c.greens.map((i) => ({ code: i.ref, name: i.name, tags: i.tags })),
       music: c.music.map((i) => ({ code: i.ref, name: i.name, tags: i.tags })),
@@ -146,14 +159,50 @@ export async function writeConcepts(env: Env, r: IdeaRequest): Promise<Concept[]
   };
   const answer = (await aiJson(env, instructions, input, conceptJson, Math.min(12000, 1500 + r.plan.length * 900), 100000)) as { posts?: Concept[] } | null;
   if (!answer?.posts?.length) throw new HTTPException(503, { message: "We couldn't write posts right now. Please try again in a minute." });
-  return answer.posts.slice(0, r.plan.length);
+  return varied(answer.posts.slice(0, r.plan.length), r.plan);
 }
 
-const lookFor = (format: FormatId): TextLook => {
-  if (format === "slideshow") return { ...textPresets.box.look };
-  if (format === "green_screen") return { ...textPresets.classic.look, position: "top" };
-  return { ...textPresets.classic.look };
+/** Entrance animations that suit each format's text; the first is the default. */
+const animationsFor: Record<FormatId, TextAnimation[]> = {
+  slideshow: ["fade", "rise", "pop", "none"],
+  text: ["words", "fade", "rise"],
+  hook_demo: ["pop", "rise", "fade"],
+  green_screen: ["pop", "rise", "fade"],
+  ugc: ["rise", "pop", "fade", "none"],
 };
+/** Caption styles offered when the writer repeats itself, in order: the most readable first. */
+const styleOrder: CaptionStyle[] = ["bold", "karaoke", "highlight", "classic", "pop", "bounce", "neon", "underline", "tiles", "banner", "fade", "luxe", "minimal", "outline", "retro", "sticker", "wave", "bubble", "typewriter", "impact"];
+/**
+ * A batch never repeats a caption style among its AI UGC posts, nor an entrance animation between posts of the same
+ * format (walls of text keep their word-by-word reveal): a repeat becomes the next unused fitting choice.
+ */
+export function varied(concepts: Concept[], plan: FormatId[]): Concept[] {
+  const styles = new Set<string>(), animations = new Map<FormatId, Set<string>>();
+  return concepts.map((k, n) => {
+    const format = plan[n] || k.format, out = { ...k };
+    if (format === "ugc") {
+      const style = captionStyles.includes(k.captionStyle as CaptionStyle) && !styles.has(k.captionStyle!) ? k.captionStyle! : styleOrder.find((x) => !styles.has(x)) || "bold";
+      styles.add(style);
+      out.captionStyle = style;
+    }
+    const allowed = animationsFor[format] || ["none"], used = animations.get(format) || new Set<string>();
+    animations.set(format, used);
+    const fits = allowed.includes(k.animation as TextAnimation) ? k.animation! : allowed[0];
+    out.animation = format === "text" || !used.has(fits) ? fits : allowed.find((x) => !used.has(x)) || fits;
+    used.add(out.animation);
+    return out;
+  });
+}
+
+const lookFor = (format: FormatId, animation?: string): TextLook => {
+  // The writer's entrance animation when it suits the format, else the format's own.
+  const enter = animationsFor[format].includes(animation as TextAnimation) ? (animation as TextAnimation) : animationsFor[format][0];
+  if (format === "slideshow") return { ...textPresets.box.look, animation: enter };
+  if (format === "green_screen") return { ...textPresets.classic.look, position: "top", animation: enter };
+  if (format === "ugc") return { ...textPresets.classic.look, position: "top", animation: enter };
+  return { ...textPresets.classic.look, animation: enter };
+};
+const styleOf = (value: string | undefined, fallback: CaptionStyle): CaptionStyle => (captionStyles.includes(value as CaptionStyle) ? (value as CaptionStyle) : fallback);
 /** Turns a written concept into a valid spec with real IDs, or null when it cannot be made. */
 export function conceptToSpec(k: Concept, format: FormatId, r: Pick<IdeaRequest, "catalog" | "useCredits" | "caps" | "mention" | "profile">): Spec | null {
   const c = r.catalog, ai = r.useCredits && r.caps.aiMedia, brand = r.profile.colors?.primary || "#7c5cff";
@@ -188,7 +237,7 @@ export function conceptToSpec(k: Concept, format: FormatId, r: Pick<IdeaRequest,
   if (format === "slideshow") {
     const slides = (k.slides || []).filter((s) => clean(s.text, 300)).slice(0, 10).map((s, i) => ({ text: clean(s.text, 300), image: image(s.image || "", i) }));
     if (slides.length < 2) return null;
-    spec = { format, slides, look: lookFor(format), ...common };
+    spec = { format, slides, look: lookFor(format, k.animation), ...common };
   } else if (format === "text") {
     const text = clean(k.text, 600);
     if (!text) return null;
@@ -197,7 +246,7 @@ export function conceptToSpec(k: Concept, format: FormatId, r: Pick<IdeaRequest,
     const background = clip ? { libraryId: clip.id } : img ? { assetId: img.id } : clipPrompt ? { prompt: clipPrompt, clip: true }
       : c.clips.length ? { libraryId: c.clips[Math.floor(Math.random() * c.clips.length)].id } : image(k.background || "");
     const words = text.split(/\s+/).length;
-    spec = { format, text, background, look: lookFor(format), seconds: Math.min(20, Math.max(6, Math.round(words / 3.2))), ...common };
+    spec = { format, text, background, look: lookFor(format, k.animation), seconds: Math.min(20, Math.max(6, Math.round(words / 3.2))), ...common };
   } else if (format === "hook_demo") {
     const hook = clean(k.text, 200), demo = find(c.videos, k.demo || "") || c.videos[0];
     if (!hook || !demo) return null;
@@ -207,18 +256,20 @@ export function conceptToSpec(k: Concept, format: FormatId, r: Pick<IdeaRequest,
     const clip = find(c.clips, k.hookClip || "") || c.clips.find((x) => /reaction/i.test(x.tags || "")) || c.clips[0];
     const hookClip = talkingOk ? { characterId: character!.id, voiceId: k.voice, line: clean(say![1], 200) } : clip ? { libraryId: clip.id } : null;
     if (!hookClip) return null;
-    spec = { format, hook, hookClip, demo: { assetId: demo.id, start: 0, seconds: Math.min(20, Math.max(4, Math.floor(demo.seconds || 12))) }, demoText: clean(k.demoText, 200), look: lookFor(format), ...common };
+    // A demo with speech gets its subtitles.
+    const subtitles = { enabled: !!demo.speech, style: styleOf(k.captionStyle, "classic") };
+    spec = { format, hook, hookClip, demo: { assetId: demo.id, start: 0, seconds: Math.min(20, Math.max(4, Math.floor(demo.seconds || 12))) }, demoText: clean(k.demoText, 200), subtitles, look: lookFor(format, k.animation), ...common };
   } else if (format === "green_screen") {
     const text = clean(k.text, 300), green = find(c.greens, k.greenScreen || "") || c.greens[0];
     if (!text || !green) return null;
-    spec = { format, text, clipId: green.id, background: image(k.background || ""), look: lookFor(format), seconds: Math.min(12, Math.max(5, Math.round((green.seconds || 7)))), ...common };
+    spec = { format, text, clipId: green.id, background: image(k.background || ""), look: lookFor(format, k.animation), seconds: Math.min(12, Math.max(5, Math.round((green.seconds || 7)))), ...common };
   } else {
     const character = find(c.characters, k.character || "") || c.characters[0];
     // Spoken text only: stage directions, markdown and hashtags are removed.
     const script = clean(k.script, 900).replace(/\[[^\]]*\]|\([^)]*\)/g, "").replace(/[#*_~]/g, "").replace(/[ \t]{2,}/g, " ").trim();
     if (!character || script.length < 20) return null;
     const voice = voices.find((v) => v.id === k.voice) || voices.find((v) => v.gender === character.gender) || voices[0];
-    spec = { format, characterId: character.id, voiceId: voice.id, script, hook: clean(k.text, 140), ...common };
+    spec = { format, characterId: character.id, voiceId: voice.id, script, hook: clean(k.text, 140), hookLook: lookFor(format, k.animation), captionStyle: styleOf(k.captionStyle, "bold"), ...common };
   }
   const parsed = specSchema.safeParse(spec);
   return parsed.success ? parsed.data : null;

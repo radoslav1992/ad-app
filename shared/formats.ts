@@ -93,6 +93,15 @@ const generatedVoice = z.object({
 });
 export type Generated = z.infer<typeof generatedVoice>;
 
+/**
+ * Subtitles from the speech in an uploaded clip (transcribed when it was uploaded, shared/speech.ts): off unless
+ * switched on, and the caption style they use. Posts made before subtitles existed have them off.
+ */
+export const subtitlesSchema = z
+  .object({ enabled: z.boolean().default(false), style: z.enum(captionStyles).default("classic" satisfies CaptionStyle) })
+  .default({ enabled: false, style: "classic" });
+export type Subtitles = z.infer<typeof subtitlesSchema>;
+
 export const slideSchema = z.object({ text: screen(300), image: imageRefSchema });
 export const slideshowSpec = z.object({
   format: z.literal("slideshow"),
@@ -109,6 +118,8 @@ export const textSpec = z.object({
   background: backgroundSchema,
   /** Keep the background clip's own sound. */
   clipAudio: z.boolean().default(false),
+  /** Subtitles of the background clip's speech (an own upload, with its sound kept). */
+  subtitles: subtitlesSchema,
   look,
   seconds: z.number().min(4).max(30).default(8),
   music: musicSchema,
@@ -140,6 +151,8 @@ export const hookDemoSpec = z.object({
   /** The demo: an uploaded video, from `start` for `seconds`. */
   demo: z.object({ assetId: uuid, start: z.number().min(0).max(600).default(0), seconds: z.number().min(2).max(45).default(12) }),
   demoText: screen(200).default(""),
+  /** Subtitles of what is said in the demo (the part of it that is used). */
+  subtitles: subtitlesSchema,
   look,
   music: musicSchema,
   generated: generatedVoice.optional(),

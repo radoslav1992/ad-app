@@ -1,22 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, RefreshCw, Shuffle, Sparkles, Trash2, Wand2, ChevronLeft, ChevronRight, Lightbulb, Save, VolumeX, Volume2 } from "lucide-react";
-import { api, errorText, newKey, post, put, useAuth, type Asset, type Character, type LibraryItem, type Post } from "../lib";
+import { Plus, RefreshCw, Shuffle, Sparkles, Trash2, Wand2, ChevronLeft, ChevronRight, Lightbulb, Save, VolumeX, Volume2, AudioLines } from "lucide-react";
+import { api, errorText, fileUrl, newKey, post, put, usePoll, useAuth, type Asset, type Character, type LibraryItem, type Post } from "../lib";
 import { useCurrentWorkspace } from "./workspace";
-import { TextPreview } from "./PostView";
+import { TextPreview, type PreviewBackground, type TextBlock } from "./TextPreview";
+import { CaptionStylePicker, EditorSection, TextAnimationPicker } from "./CaptionPickers";
 import { MediaPicker, LibraryPicker } from "./pickers";
 import { Switch, useToast } from "../ui";
-import { formatIds, formats, specCredits, specSchema, type FormatId, type Spec } from "../../shared/formats";
+import { formatIds, formats, recordingCurrent, specCredits, specSchema, HOOK_CLIP_MAX_SECONDS, type FormatId, type Spec, type Subtitles } from "../../shared/formats";
 import { hookPatterns, writingStyles, writingStyleIds, type WritingStyle } from "../../shared/hooks";
 import { textPresets, type TextLook } from "../../shared/overlay";
+import { styledCaptions, type CaptionDocument, type CaptionWord } from "../../shared/captions";
+import { clipWords, loopedWords, type SpeechStatus } from "../../shared/speech";
 import { voices } from "../../shared/voices";
 import { creditsLabel } from "../../shared/credits";
 import "./create.css";
 
 // Manual creation: pick a format and media, let the writer draft it, adjust the text and look, then save (it renders
-// in the background and is approved). Also edits existing posts (?post=<id>).
+// in the background and is approved). Also edits existing posts (?post=<id>). The preview plays the post's text
+// animation and captions as rendered; the caption styles and a clip's subtitles are chosen under it.
 
-type Picked = { url: string; kind: "image" | "video" | "audio"; name: string };
+/** A file in the post as the editor knows it; own videos and tracks also bring their speech (word timings). */
+type Picked = { url: string; kind: "image" | "video" | "audio"; name: string; duration?: number; speech?: SpeechStatus | null; words?: CaptionWord[] };
+type MediaAsset = Asset & { speech?: SpeechStatus | null; transcript?: { language: string; words: CaptionWord[] } | null };
 type Picker = null | { type: "image" | "video" | "audio"; target: string } | { library: "clip" | "greenscreen" | "music"; target: string };
 const blankSpec = (format: FormatId, accent: string): Spec | null => {
   const parsed = specSchema.safeParse(
@@ -49,10 +55,17 @@ export function Create() {
   const [picker, setPicker] = useState<Picker>(null);
   const [tab, setTab] = useState<"inspiration" | "preview">(editing ? "preview" : "inspiration");
   const [slide, setSlide] = useState(0);
+  /** Which part of a hook + demo the preview plays. */
+  const [part, setPart] = useState<"hook" | "demo">("hook");
   const [busy, setBusy] = useState<"" | "generate" | "save">("");
   const [saveKey, setSaveKey] = useState(newKey);
 
   const remember = useCallback((id: string, item: Picked) => setMedia((m) => ({ ...m, [id]: item })), []);
+  /** One own file, with its speech (the media list has no transcripts). */
+  const loadAsset = useCallback(async (id: string) => {
+    const { asset } = await api<{ asset: MediaAsset }>(`/media/${id}`);
+    remember(id, { url: asset.url, kind: asset.mime.split("/")[0] as Picked["kind"], name: asset.name, duration: asset.duration, speech: asset.speech ?? null, words: asset.transcript?.words });
+  }, [remember]);
   // What referenced media looks like in the preview: own files from the media API, shared items from the library.
   const resolve = useCallback(async (s: Spec) => {
     const ids = new Set<string>(), libs = new Set<string>();
@@ -61,19 +74,14 @@ export function Create() {
     if (s.format === "text" && s.background.libraryId) libs.add(s.background.libraryId);
     if (s.format === "green_screen") libs.add(s.clipId);
     if (s.format === "hook_demo") { ids.add(s.demo.assetId); if ("libraryId" in s.hookClip) libs.add(s.hookClip.libraryId); }
-    for (const id of ids) if (!media[id]) {
-      try {
-        const { asset } = await api<{ asset: Asset }>(`/media/${id}`);
-        remember(id, { url: asset.url, kind: asset.mime.split("/")[0] as Picked["kind"], name: asset.name });
-      } catch { /* shown as missing */ }
-    }
+    for (const id of ids) if (!media[id]) await loadAsset(id).catch(() => { /* shown as missing */ });
     if ([...libs].some((id) => !media[id])) {
       try {
         const { items } = await api<{ items: LibraryItem[] }>("/library");
-        for (const i of items) remember(i.id, { url: i.url, kind: i.kind === "music" ? "audio" : "video", name: i.name });
+        for (const i of items) remember(i.id, { url: i.url, kind: i.kind === "music" ? "audio" : "video", name: i.name, duration: i.duration });
       } catch { /* shown as missing */ }
     }
-  }, [media, remember]);
+  }, [media, remember, loadAsset]);
   useEffect(() => { void api<{ characters: Character[] }>("/characters").then((r) => setCharacters(r.characters)).catch(() => {}); }, []);
   useEffect(() => {
     if (!editing) return;
@@ -146,10 +154,35 @@ export function Create() {
   const change = (next: Partial<Spec>) => spec && setSpec({ ...spec, ...next } as Spec);
   const look: TextLook | null = spec && "look" in spec ? spec.look : spec?.format === "ugc" ? spec.hookLook : null;
   const setLook = (l: TextLook) => spec && (spec.format === "ugc" ? change({ hookLook: l } as Partial<Spec>) : change({ look: l } as Partial<Spec>));
+  // AI UGC captions: the recording's words, or a timed sample of the script's start until it is recorded.
+  const script = spec?.format === "ugc" ? spec.script : "";
+  const sample = useMemo(() => sampleWords(script), [script]);
+  const ugcWords = spec?.format === "ugc" && recordingCurrent(spec) && spec.generated?.videoAssetId ? spec.generated.words : sample.words;
+  const ugcStyle = spec?.format === "ugc" ? spec.captionStyle : null;
+  const ugcCaptions = useMemo(() => (ugcStyle ? styledCaptions(ugcWords, ugcStyle) : null), [ugcWords, ugcStyle]);
   const picked = (id: string | undefined) => (id ? media[id] : undefined);
+  // The own clip whose speech can become subtitles: the demo, or a wall of text's video background.
+  const speechId = spec?.format === "hook_demo" ? spec.demo.assetId : spec?.format === "text" && picked(spec.background.assetId)?.kind === "video" ? spec.background.assetId : undefined;
+  const speechClip = picked(speechId);
+  // While its speech is being found, check again every few seconds.
+  usePoll(() => { if (speechId) void loadAsset(speechId).catch(() => {}); }, 4000, speechClip?.speech === "pending");
+  const [finding, setFinding] = useState(false);
+  const findSpeech = async () => {
+    if (!speechId) return;
+    setFinding(true);
+    try {
+      await post(`/media/${speechId}/speech`);
+      await loadAsset(speechId);
+    } catch (e) {
+      toast(errorText(e), "bad");
+    } finally {
+      setFinding(false);
+    }
+  };
   /** A pick from a picker: `library` items are shared clips/tracks, the rest the owner's own files. */
   const onPick = (target: string, id: string, item: Picked, library: boolean) => {
     remember(id, item);
+    if (!library && item.kind === "video") void loadAsset(id).catch(() => {});
     if (target.startsWith("input:")) { setInputs({ ...inputs, [target.slice(6)]: id }); return; }
     if (!spec) return;
     if (target === "slide" && spec.format === "slideshow") change({ slides: spec.slides.map((s, i) => (i === slide ? { ...s, image: { assetId: id } } : s)) });
@@ -161,25 +194,48 @@ export function Create() {
     if (target === "green" && spec.format === "green_screen") change({ clipId: id });
   };
 
-  // Preview: what the post looks like with its text.
+  // Preview: what the post looks like with its text, animated and with its captions, on a loop of the post's clock.
   const preview = (() => {
     if (!spec || !look) return null;
-    const bg = (ref: { assetId?: string; libraryId?: string; color?: string; prompt?: string }) => {
+    const bg = (ref: { assetId?: string; libraryId?: string; color?: string; prompt?: string }): PreviewBackground => {
       const m = picked(ref.assetId || ref.libraryId);
       if (m && m.kind !== "audio") return { url: m.url, kind: m.kind as "image" | "video" };
       return { color: ref.color || (ref.prompt ? "#3b2a6b" : workspace.profile.colors.primary) };
     };
+    const replay = `${look.animation}:${slide}:${part}`;
+    const block = (text: string, l: TextLook, end: number, start = 0): TextBlock => ({ text, look: l, start, end });
     if (spec.format === "slideshow") {
       const s = spec.slides[Math.min(slide, spec.slides.length - 1)];
-      return <TextPreview text={s.text} look={look} background={bg(s.image)} />;
+      return <TextPreview blocks={[block(s.text, look, spec.secondsPerSlide)]} seconds={spec.secondsPerSlide} background={bg(s.image)} replay={replay} />;
     }
-    if (spec.format === "text" || spec.format === "green_screen") return <TextPreview text={spec.text} look={look} background={bg(spec.background)} />;
+    if (spec.format === "text" || spec.format === "green_screen") {
+      // A clip's own speech, where it repeats as the clip loops behind the text.
+      const clip = spec.format === "text" && spec.clipAudio ? picked(spec.background.assetId) : undefined;
+      const words = spec.format === "text" && clip?.words?.length ? loopedWords(clip.words, clip.duration || 0, spec.seconds) : [];
+      return <TextPreview blocks={[block(spec.text, look, spec.seconds)]} seconds={spec.seconds} background={bg(spec.background)} replay={replay}
+        captions={subtitleCaptions(spec.format === "text" ? spec.subtitles : null, words, look.position === "bottom" ? "top" : "bottom")} sound={!!clip} />;
+    }
     if (spec.format === "hook_demo") {
+      if (part === "demo") {
+        const demo = picked(spec.demo.assetId);
+        const start = Math.min(spec.demo.start, Math.max(0, (demo?.duration || 0) - 1));
+        const length = Math.max(1, Math.min(spec.demo.seconds, (demo?.duration || spec.demo.seconds + start) - start));
+        return <TextPreview blocks={[block(spec.demoText, { ...look, position: "top" }, length)]} seconds={length} replay={replay}
+          background={demo ? { url: demo.url, kind: "video", start } : { color: "#1e2433" }} videoClock={!!demo} sound
+          captions={subtitleCaptions(spec.subtitles, demo?.words ? clipWords(demo.words, start, length, 0) : [])} />;
+      }
       const clip = "libraryId" in spec.hookClip ? picked(spec.hookClip.libraryId) : null;
-      return <TextPreview text={spec.hook} look={look} background={clip ? { url: clip.url, kind: "video" } : { color: "#1e2433" }} />;
+      const seconds = Math.min(clip?.duration || 3, HOOK_CLIP_MAX_SECONDS);
+      return <TextPreview blocks={[block(spec.hook, look, seconds)]} seconds={seconds} replay={replay} background={clip ? { url: clip.url, kind: "video" } : { color: "#1e2433" }} />;
+    }
+    // AI UGC: the made recording with its real word timings, or the creator's picture with a sample of the script.
+    if (recordingCurrent(spec) && spec.generated?.videoAssetId && spec.generated.words.length) {
+      return <TextPreview blocks={[block(spec.hook, look, 3)]} seconds={existing?.duration || 600} videoClock sound replay={replay}
+        background={{ url: fileUrl(spec.generated.videoAssetId), kind: "video" }} captions={ugcCaptions} />;
     }
     const character = characters.find((c) => c.id === spec.characterId);
-    return <TextPreview text={spec.hook} look={look} background={character ? { url: character.image, kind: "image" } : { color: "#1e2433" }} />;
+    return <TextPreview blocks={[block(spec.hook, look, Math.min(3, sample.seconds))]} seconds={sample.seconds} replay={replay}
+      background={character ? { url: character.image, kind: "image" } : { color: "#1e2433" }} captions={ugcCaptions} />;
   })();
   const aiPrompts = spec?.format === "slideshow" ? spec.slides.filter((s) => !s.image.assetId && !s.image.color && s.image.prompt).length : 0;
 
@@ -265,7 +321,7 @@ export function Create() {
           )}
           {editing && existing && (
             <div className="card flat stack">
-              <strong>Editing a {formats[existing.format].name.toLowerCase()}</strong>
+              <strong>Editing: {formats[existing.format].name}</strong>
               <p className="muted small">Text and look changes re-render the post for free. New AI pictures or a new script for a creator use credits.</p>
               <Link className="btn" to="/app/content">Back to Content</Link>
             </div>
@@ -297,20 +353,39 @@ export function Create() {
               ))}
             </div>
           ) : spec && look ? (
-            <div className="preview-grid">
-              <div className="preview-phone">
-                {preview}
-                {spec.format === "slideshow" && (
-                  <div className="row" style={{ justifyContent: "center", marginTop: 10 }}>
-                    <button className="btn icon sm" disabled={slide === 0} onClick={() => setSlide(slide - 1)} aria-label="Previous slide"><ChevronLeft size={16} /></button>
-                    <span className="small muted">Slide {slide + 1} of {spec.slides.length}</span>
-                    <button className="btn icon sm" disabled={slide >= spec.slides.length - 1} onClick={() => setSlide(slide + 1)} aria-label="Next slide"><ChevronRight size={16} /></button>
-                  </div>
-                )}
+            <>
+              <div className="preview-grid">
+                <div className="preview-phone">
+                  {preview}
+                  {spec.format === "slideshow" && (
+                    <div className="row" style={{ justifyContent: "center", marginTop: 10 }}>
+                      <button className="btn icon sm" disabled={slide === 0} onClick={() => setSlide(slide - 1)} aria-label="Previous slide"><ChevronLeft size={16} /></button>
+                      <span className="small muted">Slide {slide + 1} of {spec.slides.length}</span>
+                      <button className="btn icon sm" disabled={slide >= spec.slides.length - 1} onClick={() => setSlide(slide + 1)} aria-label="Next slide"><ChevronRight size={16} /></button>
+                    </div>
+                  )}
+                  {spec.format === "hook_demo" && (
+                    <div className="seg small-seg preview-parts" role="group" aria-label="Part to preview">
+                      <button type="button" aria-pressed={part === "hook"} onClick={() => setPart("hook")}>Hook</button>
+                      <button type="button" aria-pressed={part === "demo"} onClick={() => setPart("demo")}>Demo</button>
+                    </div>
+                  )}
+                </div>
+                <Inspector spec={spec} look={look} setLook={setLook} slide={slide} setSlide={setSlide} onChange={change}
+                  pick={(p) => setPicker(p)} aiPrompts={aiPrompts} characters={characters} demoSeconds={picked(spec.format === "hook_demo" ? spec.demo.assetId : undefined)?.duration} />
               </div>
-              <Inspector spec={spec} look={look} setLook={setLook} slide={slide} setSlide={setSlide} onChange={change}
-                pick={(p) => setPicker(p)} aiPrompts={aiPrompts} characters={characters} />
-            </div>
+              {spec.format === "ugc" && (
+                <EditorSection title="Captions" hint="Word-by-word captions of what your creator says. The preview plays a sample until the voice is recorded.">
+                  <CaptionStylePicker value={spec.captionStyle} onChange={(captionStyle) => change({ captionStyle } as Partial<Spec>)} />
+                </EditorSection>
+              )}
+              {(spec.format === "hook_demo" || spec.format === "text") && speechClip && speechClip.kind === "video" && (
+                <SubtitlesSection clip={speechClip} subtitles={spec.subtitles} finding={finding} onFind={findSpeech}
+                  soundKept={spec.format === "hook_demo" || spec.clipAudio} where={spec.format === "hook_demo" ? "demo" : "clip"}
+                  onKeepSound={() => change({ clipAudio: true } as Partial<Spec>)}
+                  onChange={(subtitles) => { change({ subtitles } as Partial<Spec>); if (spec.format === "hook_demo" && subtitles.enabled) setPart("demo"); }} />
+              )}
+            </>
           ) : (
             <div className="empty"><Sparkles size={28} /><p>{format === "ugc" || format === "hook_demo" || format === "green_screen" ? "Choose your media on the left, then Generate." : "Generate a draft, or start typing on the left."}</p></div>
           )}
@@ -318,11 +393,11 @@ export function Create() {
       </div>
       {picker && "type" in picker && (
         <MediaPicker workspaceId={workspace.id} type={picker.type} allowUpload onClose={() => setPicker(null)}
-          onPick={(a) => { onPick(picker.target, a.id, { url: a.url, kind: a.mime.split("/")[0] as Picked["kind"], name: a.name }, false); setPicker(null); }} />
+          onPick={(a) => { onPick(picker.target, a.id, { url: a.url, kind: a.mime.split("/")[0] as Picked["kind"], name: a.name, duration: a.duration }, false); setPicker(null); }} />
       )}
       {picker && "library" in picker && (
         <LibraryPicker kind={picker.library} onClose={() => setPicker(null)}
-          onPick={(i) => { onPick(picker.target, i.id, { url: i.url, kind: i.kind === "music" ? "audio" : "video", name: i.name }, true); setPicker(null); }} />
+          onPick={(i) => { onPick(picker.target, i.id, { url: i.url, kind: i.kind === "music" ? "audio" : "video", name: i.name, duration: i.duration }, true); setPicker(null); }} />
       )}
     </main>
   );
@@ -384,10 +459,43 @@ function TextFields({ spec, slide, onChange }: { spec: Spec; slide: number; onCh
   );
 }
 
+/**
+ * Subtitles of a clip's speech (a demo, or a wall of text's own video with its sound kept): a switch and the caption
+ * styles once speech was found; otherwise where finding it stands, and "Find speech" for files not yet listened to.
+ */
+function SubtitlesSection({ clip, subtitles, soundKept, where, finding, onFind, onKeepSound, onChange }: {
+  clip: Picked; subtitles: Subtitles; soundKept: boolean; where: "demo" | "clip"; finding: boolean;
+  onFind: () => void; onKeepSound: () => void; onChange: (s: Subtitles) => void;
+}) {
+  const status = clip.speech ?? null;
+  if (status === "found" && clip.words?.length) {
+    if (!soundKept)
+      return (
+        <EditorSection title="Subtitles" hint="This clip has speech. Keep its sound to add subtitles of what's said."
+          action={<button type="button" className="btn sm" onClick={onKeepSound}><Volume2 size={14} /> Keep clip sound</button>} />
+      );
+    return (
+      <EditorSection title="Subtitles" hint={`What's said in the ${where === "demo" ? "part of the demo you use" : "clip"}, timed to the voice.`}
+        action={<Switch checked={subtitles.enabled} onChange={(enabled) => onChange({ ...subtitles, enabled })} label="Show subtitles" />}>
+        {subtitles.enabled && <CaptionStylePicker label="Subtitle style" value={subtitles.style} onChange={(style) => onChange({ ...subtitles, style })} />}
+      </EditorSection>
+    );
+  }
+  if (status === "pending" || finding)
+    return <EditorSection title="Subtitles" hint={<><span className="spinner" aria-hidden="true" /> Listening for speech in this video. It takes a minute or so.</>} />;
+  if (status === "none" || status === "found") return <EditorSection title="Subtitles" hint="We didn't hear any speech in this video, so it has no subtitles." />;
+  return (
+    <EditorSection title="Subtitles" hint={status === "failed" ? "We couldn't listen to this video for speech. You can try again." : "We haven't listened to this video for speech yet. It's free."}
+      action={<button type="button" className="btn sm" onClick={onFind} disabled={finding}><AudioLines size={14} /> Find speech</button>} />
+  );
+}
+
 /** The editor's right-hand controls: text look, media swaps, slides, sound. */
-function Inspector({ spec, look, setLook, slide, setSlide, onChange, pick, aiPrompts, characters }: {
+function Inspector({ spec, look, setLook, slide, setSlide, onChange, pick, aiPrompts, characters, demoSeconds }: {
   spec: Spec; look: TextLook; setLook: (l: TextLook) => void; slide: number; setSlide: (n: number) => void; onChange: (s: Partial<Spec>) => void;
   pick: (p: Picker) => void; aiPrompts: number; characters: Character[];
+  /** Length of the chosen demo video, when known. */
+  demoSeconds?: number;
 }) {
   const range = (label: string, value: number, min: number, max: number, stepSize: number, set: (v: number) => void, unit = "") => (
     <label className="field"><span className="small">{label}: {unit === "x" ? `${Math.round(value * 100)}%` : `${value}${unit}`}</span>
@@ -402,7 +510,11 @@ function Inspector({ spec, look, setLook, slide, setSlide, onChange, pick, aiPro
       <div className="stack" style={{ gap: 10 }}>
         <strong className="small">Text</strong>
         <div className="seg small-seg">
-          {Object.entries(textPresets).map(([id, p]) => <button key={id} onClick={() => setLook({ ...p.look, position: look.position })} aria-pressed={JSON.stringify({ ...p.look, position: look.position }) === JSON.stringify(look)}>{p.name}</button>)}
+          {Object.entries(textPresets).map(([id, p]) => {
+            // A preset changes the letters, not where the text sits or how it enters.
+            const next = { ...p.look, position: look.position, animation: look.animation };
+            return <button key={id} onClick={() => setLook(next)} aria-pressed={JSON.stringify(next) === JSON.stringify(look)}>{p.name}</button>;
+          })}
         </div>
         <div className="seg small-seg">
           {(["regular", "bold"] as const).map((w) => <button key={w} aria-pressed={look.weight === w} onClick={() => setLook({ ...look, weight: w })}>{w === "bold" ? "Bold" : "Regular"}</button>)}
@@ -419,6 +531,8 @@ function Inspector({ spec, look, setLook, slide, setSlide, onChange, pick, aiPro
         <div className="seg small-seg" role="group" aria-label="Position">
           {(["top", "center", "bottom"] as const).map((p) => <button key={p} aria-pressed={look.position === p} onClick={() => setLook({ ...look, position: p })}>{p[0].toUpperCase() + p.slice(1)}</button>)}
         </div>
+        <span className="small">Animation</span>
+        <TextAnimationPicker look={look} onChange={(animation) => setLook({ ...look, animation })} />
       </div>
       <hr />
       {spec.format === "slideshow" && (
@@ -435,6 +549,8 @@ function Inspector({ spec, look, setLook, slide, setSlide, onChange, pick, aiPro
         <div className="stack" style={{ gap: 8 }}>
           <button className="btn sm" onClick={() => pick(spec.format === "text" ? { library: "clip", target: "background" } : { type: "image", target: "background" })}>{spec.format === "text" ? "Swap video" : "Swap picture"}</button>
           {spec.format === "text" && <button className="btn sm" onClick={() => pick({ type: "image", target: "background" })}>Use my image</button>}
+          {/* An own video can keep its sound, and its speech can become subtitles. */}
+          {spec.format === "text" && <button className="btn sm" onClick={() => pick({ type: "video", target: "background" })}>Use my video</button>}
           {spec.format === "green_screen" && <button className="btn sm" onClick={() => pick({ library: "greenscreen", target: "green" })}>Swap creator clip</button>}
           <button className="btn sm" onClick={() => onChange({ clipAudio: !spec.clipAudio } as Partial<Spec>)}>{spec.clipAudio ? <><VolumeX size={14} /> Mute clip sound</> : <><Volume2 size={14} /> Keep clip sound</>}</button>
           {range("Length", spec.seconds, spec.format === "text" ? 4 : 3, spec.format === "text" ? 30 : 20, 1, (v) => onChange({ seconds: v } as Partial<Spec>), "s")}
@@ -444,6 +560,7 @@ function Inspector({ spec, look, setLook, slide, setSlide, onChange, pick, aiPro
         <div className="stack" style={{ gap: 8 }}>
           <button className="btn sm" onClick={() => pick({ library: "clip", target: "hookClip" })}>Swap hook clip</button>
           <button className="btn sm" onClick={() => pick({ type: "video", target: "demo" })}>Swap demo video</button>
+          {range("Demo starts at", spec.demo.start, 0, demoSeconds ? Math.max(0, Math.min(600, Math.floor(demoSeconds - 2))) : Math.max(60, spec.demo.start), 0.5, (v) => onChange({ demo: { ...spec.demo, start: v } }), "s")}
           {range("Demo length", spec.demo.seconds, 2, 45, 1, (v) => onChange({ demo: { ...spec.demo, seconds: v } }), "s")}
         </div>
       )}
@@ -470,4 +587,23 @@ function Inspector({ spec, look, setLook, slide, setSlide, onChange, pick, aiPro
       <p className="muted small">The preview uses the same fonts and layout as the final video.</p>
     </div>
   );
+}
+
+/** Subtitles to preview: the words of the used part of a clip, in the chosen style (null when they are off). */
+function subtitleCaptions(settings: Subtitles | null, words: CaptionWord[], position: CaptionDocument["position"] = "bottom"): CaptionDocument | null {
+  return settings?.enabled && words.length ? styledCaptions(words, settings.style, position) : null;
+}
+/**
+ * Up to a dozen words of a script with rough speaking times, so a caption style can be previewed before the voice
+ * is recorded (the real timings replace them). Longer words take longer; a sentence end adds a pause.
+ */
+function sampleWords(script: string): { words: CaptionWord[]; seconds: number } {
+  const words: CaptionWord[] = [];
+  let t = 0.3;
+  for (const text of script.split(/\s+/).filter(Boolean).slice(0, 12)) {
+    const length = 0.12 + 0.055 * Math.min(12, text.length);
+    words.push({ text, start: Math.round(t * 100) / 100, end: Math.round((t + length) * 100) / 100 });
+    t += length + (/[.!?]$/.test(text) ? 0.35 : 0.04);
+  }
+  return { words, seconds: Math.max(2.5, t + 0.8) };
 }

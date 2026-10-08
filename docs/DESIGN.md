@@ -59,4 +59,11 @@ opens Blitz and starts the first batch of posts as soon as the brand analysis is
 - **Create** (manual creation, from the owner's demo video): format tabs (Slideshow, Wall of Text, Video Hook & Demo,
   Green Screen Meme, AI UGC); left panel with Mode (Create new / Remix), "Mention your business?", media pickers
   (video, audio, creator), style and prompt, **Generate**; right panel with Proven formats / Preview and an
-  inspector for the text (preset, weight, size, colour, stroke, box, position), swaps, slides and audio; **Save & build**.
+  inspector for the text (preset, weight, size, colour, stroke, box, position, animation), swaps, slides and audio;
+  **Save & build**. The preview plays the post's text animation and captions on a canvas, in sync with the video when
+  there is a recorded voice or a demo with speech (Hook / Demo switch for hook & demo posts).
+  Under the preview: **Captions** for AI UGC, a grid of the twenty caption styles, each a looping live sample; and
+  **Subtitles** for a demo (or a wall of text's own clip with its sound kept) with speech: a switch and the same
+  grid, or "Find speech" for an upload not yet listened to. Animation choices are small live tiles too. Every grid
+  is a radio group (arrow keys move the choice); the chosen tile turns ink with a lime underline. With reduced motion
+  the samples and the preview show a still moment.
