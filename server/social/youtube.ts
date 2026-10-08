@@ -1,8 +1,8 @@
 import type { Env } from "../types";
 import { now } from "../types";
-import type { FailureCode, Platform, PublishContext, PublishResult, Tokens } from "./types";
+import type { FailureCode, Platform, PostStats, PublishContext, PublishResult, Tokens } from "./types";
 import { SocialError, failure, oauthFailure, safeCode } from "./errors";
-import { bearer, challenge, checkedUrl, clip, form, json, readRange, send } from "./http";
+import { bearer, challenge, checkedUrl, clip, count, form, json, readRange, send } from "./http";
 
 // YouTube: Google OAuth 2 (web server flow with PKCE) and the YouTube Data API v3 resumable upload.
 const AUTHORIZE = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -10,7 +10,10 @@ const TOKEN = "https://oauth2.googleapis.com/token";
 const API = "https://www.googleapis.com/youtube/v3";
 const UPLOAD = "https://www.googleapis.com/upload/youtube/v3/videos";
 const UPLOAD_SCOPE = "https://www.googleapis.com/auth/youtube.upload";
-const SCOPES = [UPLOAD_SCOPE, "https://www.googleapis.com/auth/youtube.readonly"] as const;
+/** Reads the channel at connection and the videos' statistics. */
+const READ_SCOPE = "https://www.googleapis.com/auth/youtube.readonly";
+const SCOPES = [UPLOAD_SCOPE, READ_SCOPE] as const;
+const VIDEO_ID = /^[\w-]{6,20}$/;
 /** Upload chunk: a multiple of 256 KiB, as the resumable protocol requires; bounded memory and resumable. */
 export const YOUTUBE_CHUNK = 16 * 1024 * 1024;
 
@@ -71,7 +74,7 @@ function clipBytes(s: string, max: number) {
 }
 
 function result(ctx: PublishContext, video: any): PublishResult {
-  const id = typeof video?.id === "string" && /^[\w-]{6,20}$/.test(video.id) ? video.id : "";
+  const id = typeof video?.id === "string" && VIDEO_ID.test(video.id) ? video.id : "";
   const upload = video?.status?.uploadStatus;
   if (upload === "rejected" || upload === "failed") {
     const detail = safeCode(video?.status?.rejectionReason || video?.status?.failureReason);
@@ -80,6 +83,18 @@ function result(ctx: PublishContext, video: any): PublishResult {
   }
   if (!id) throw failure("youtube", 200, ["PROVIDER_ERROR", false], "no_video_id");
   return { state: "published", externalId: id, url: `https://youtube.com/shorts/${id}` };
+}
+
+/** A videos.list answer (part=statistics) as counts by video ID. YouTube has no share count; a hidden like count or
+ *  turned-off comments leave that number out. */
+export function youtubeStats(body: any): Map<string, PostStats> {
+  const out = new Map<string, PostStats>();
+  for (const item of Array.isArray(body?.items) ? body.items : []) {
+    if (typeof item?.id !== "string" || !VIDEO_ID.test(item.id)) continue;
+    const s = item.statistics || {};
+    out.set(item.id, { views: count(s.viewCount), likes: count(s.likeCount), comments: count(s.commentCount), shares: null });
+  }
+  return out;
 }
 
 /** Where to continue after a 308: the byte after the last one Google has ("Range: bytes=0-N"), or 0. */
@@ -188,6 +203,21 @@ export const youtube: Platform = {
     // One session makes at most one video: an interrupted upload is resumed through it, never started again.
     await ctx.checkpoint({ stage: "upload", session });
     return uploadFrom(env, ctx, session, 0);
+  },
+
+  async stats(_env, tokens, ids) {
+    // Granular consent lets people untick the read scope; the answer would be 403 insufficientPermissions anyway.
+    if (tokens.scope && !tokens.scope.split(" ").includes(READ_SCOPE)) throw new SocialError("PERMISSION");
+    const out = new Map<string, PostStats>();
+    const valid = [...new Set(ids.filter((id) => VIDEO_ID.test(id)))];
+    for (let i = 0; i < valid.length; i += 50) {
+      // https://developers.google.com/youtube/v3/docs/videos/list — up to 50 IDs, 1 quota unit a call.
+      const q = new URLSearchParams({ part: "statistics", id: valid.slice(i, i + 50).join(",") });
+      const r = await send("youtube", `${API}/videos?${q}`, { headers: bearer(tokens.accessToken), timeout: 15_000 });
+      if (!r.ok) throw await googleFailure(r);
+      for (const [id, s] of youtubeStats(await json(r))) out.set(id, s);
+    }
+    return out;
   },
 
   async status(env, ctx, ticket): Promise<PublishResult> {

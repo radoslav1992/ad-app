@@ -1,14 +1,18 @@
 import type { Env } from "../types";
 import { now } from "../types";
-import type { FailureCode, Platform, PublishContext, PublishResult, Ticket, Tokens } from "./types";
+import type { FailureCode, Platform, PostStats, PublishContext, PublishResult, Ticket, Tokens } from "./types";
 import { SocialError, failure, oauthFailure, safeCode } from "./errors";
-import { bearer, checkedUrl, clip, form, hexChallenge, json, readRange, send } from "./http";
+import { bearer, checkedUrl, clip, count, form, hexChallenge, json, readRange, send } from "./http";
 
 // TikTok: Login Kit (OAuth 2 v2) and the Content Posting API (Direct Post).
 const AUTHORIZE = "https://www.tiktok.com/v2/auth/authorize/";
 const API = "https://open.tiktokapis.com/v2";
 const MiB = 1024 * 1024;
-const SCOPES = ["user.info.basic", "video.publish"] as const;
+// video.list (Display API) reads the stats of the account's public videos; connections made before it was asked for
+// lack it and are asked to reconnect.
+const SCOPES = ["user.info.basic", "video.publish", "video.list"] as const;
+const STATS_FIELDS = "id,view_count,like_count,comment_count,share_count";
+const VIDEO_ID = /^\d{1,25}$/;
 
 // The provider's own error codes and what they mean for us.
 const codes: Record<string, [FailureCode, boolean]> = {
@@ -154,6 +158,21 @@ function postId(text: string) {
   return /"publicaly_available_post_id"\s*:\s*\[\s*"?(\d{1,25})/.exec(text)?.[1] ?? "";
 }
 
+/**
+ * A video/query answer as counts by video ID. IDs are 64-bit numbers: they are quoted before parsing (TikTok documents
+ * them as strings, but a JSON number would lose its last digits).
+ */
+export function tiktokStats(text: string): Map<string, PostStats> {
+  let body: any = null;
+  try { body = JSON.parse(text.replace(/"id"\s*:\s*(\d{1,25})\b/g, '"id":"$1"')); } catch {}
+  const out = new Map<string, PostStats>();
+  for (const v of Array.isArray(body?.data?.videos) ? body.data.videos : []) {
+    if (typeof v?.id !== "string" || !VIDEO_ID.test(v.id)) continue;
+    out.set(v.id, { views: count(v.view_count), likes: count(v.like_count), comments: count(v.comment_count), shares: count(v.share_count) });
+  }
+  return out;
+}
+
 export const tiktok: Platform = {
   id: "tiktok",
   configured: (env) => !!(env.TIKTOK_CLIENT_KEY && env.TIKTOK_CLIENT_SECRET),
@@ -261,6 +280,19 @@ export const tiktok: Platform = {
     const publishId = safeCode(data.publish_id);
     if (!publishId) throw failure("tiktok", 200, ["PROVIDER_ERROR", false], "no_publish_id");
     return { state: "processing", ticket: { stage: "status", publishId, kind: "photos", username } };
+  },
+
+  async stats(_env, tokens, ids) {
+    if (tokens.scope && !tokens.scope.split(/[,\s]+/).includes("video.list")) throw new SocialError("PERMISSION");
+    const out = new Map<string, PostStats>();
+    // Private posts (an unaudited app's, or still in moderation) only have a publish ID: TikTok has no stats for them.
+    const valid = [...new Set(ids.filter((id) => VIDEO_ID.test(id)))];
+    for (let i = 0; i < valid.length; i += 20) {
+      // https://developers.tiktok.com/doc/tiktok-api-v2-video-query — up to 20 of the account's own videos a call.
+      const { text } = await api(tokens, `/video/query/?fields=${STATS_FIELDS}`, { filters: { video_ids: valid.slice(i, i + 20) } }, 15_000);
+      for (const [id, s] of tiktokStats(text)) out.set(id, s);
+    }
+    return out;
   },
 
   async status(_env, ctx, ticket): Promise<PublishResult> {

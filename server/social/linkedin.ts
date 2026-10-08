@@ -66,19 +66,23 @@ async function token(env: Env, fields: Record<string, string>): Promise<Tokens> 
   };
 }
 
-/** LinkedIn's "little text" format: reserved characters are escaped, hashtags use the hashtag template. */
+/**
+ * LinkedIn's "little text" format: reserved characters are escaped, hashtags use the hashtag template. A tracked link
+ * goes whole between the caption and the hashtags (LinkedIn turns it into a link).
+ */
 const LITTLE = /[\\|{}@[\]()<>#*_~]/g;
 const escapeLittle = (s: string) => s.replace(LITTLE, "\\$&");
-export function commentary(caption: string, hashtags: string[]) {
-  const tags = hashtags.map((h) => `{hashtag|\\#|${escapeLittle(h.replace(/^#/, ""))}}`).join(" ");
-  const room = 3000 - (tags ? tags.length + 2 : 0);
+export function commentary(caption: string, hashtags: string[], link?: string) {
+  const tail = [link ? escapeLittle(link) : "", hashtags.map((h) => `{hashtag|\\#|${escapeLittle(h.replace(/^#/, ""))}}`).join(" ")]
+    .filter(Boolean).join("\n\n");
+  const room = 3000 - (tail ? tail.length + 2 : 0);
   let body = "";
   for (const ch of caption) {
     const e = escapeLittle(ch);
     if (body.length + e.length > room) break;
     body += e;
   }
-  return [body.trim(), tags].filter(Boolean).join("\n\n");
+  return [body.trim(), tail].filter(Boolean).join("\n\n");
 }
 
 const owner = (ctx: PublishContext) => `urn:li:person:${ctx.account.externalId}`;
@@ -152,7 +156,7 @@ async function createPost(ctx: PublishContext, ticket: Ticket, content: unknown)
     // https://learn.microsoft.com/linkedin/marketing/community-management/shares/posts-api#create-a-post
     r = await rest(ctx.tokens, "POST", "/rest/posts", {
       author: owner(ctx),
-      commentary: commentary(ctx.caption, ctx.hashtags),
+      commentary: commentary(ctx.caption, ctx.hashtags, ctx.link),
       visibility: "PUBLIC",
       distribution: { feedDistribution: "MAIN_FEED", targetEntities: [], thirdPartyDistributionChannels: [] },
       content,

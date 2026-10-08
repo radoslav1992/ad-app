@@ -13,5 +13,5 @@ export function platformFor(id: string): Platform {
   return socialPlatforms[id];
 }
 
-export type { Platform, PublishContext, PublishMedia, PublishResult, MediaFile, Profile, Ticket, Tokens, FailureCode } from "./types";
+export type { Platform, PublishContext, PublishMedia, PublishResult, MediaFile, Profile, Ticket, Tokens, FailureCode, PostStats } from "./types";
 export { SocialError, failureMessage, nothingPosted } from "./errors";

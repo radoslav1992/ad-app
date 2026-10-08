@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
-  House, Rocket, Lightbulb, Zap, Wand2, UserRound, Clapperboard, Images, CalendarDays, CircleDollarSign, Building2, Share2,
+  House, Rocket, Lightbulb, Zap, Wand2, UserRound, Clapperboard, Images, CalendarDays, BarChart3, CircleDollarSign, Building2, Share2,
   Settings, Shield, PanelLeftClose, PanelLeftOpen, Clock, Menu, ChevronDown, Plus, PenSquare, LogOut,
 } from "lucide-react";
 import { post, timeLeft, useAuth, fileUrl, number } from "../lib";
@@ -85,6 +85,7 @@ export function AppLayout() {
         {item("/app/content", Clapperboard, "Content", { badge: ready })}
         {item("/app/library", Images, "Library")}
         {item("/app/calendar", CalendarDays, "Calendar")}
+        {item("/app/analytics", BarChart3, "Analytics")}
         <div className="nav-sep" />
         {(free || user.plan === "starter") && item("/app/billing", CircleDollarSign, "Upgrade", { className: "upgrade" })}
         {item("/app/brand", Building2, "Brand", { dot: brandNeedsWork })}

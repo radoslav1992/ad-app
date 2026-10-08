@@ -11,6 +11,9 @@ the swipe review drop them into the workspace's next free slot), and a cron + Wo
 | Due posts → workflow (cron, every minute) | `dispatchDue(env)` in `server/publishing.ts` |
 | Publishing one post | `Publication` workflow, `server/publish-workflow.ts` |
 | Network clients | `server/social/{tiktok,instagram,youtube,linkedin}.ts` |
+| Post stats (cron, every 5 minutes) | `refreshMetrics(env)` in `server/metrics.ts`, `stats()` in each network client |
+| Tracked links, site script, sale reports | `server/tracking.ts` (`/go/<code>`, `/t.js`, `/api/t/<site key>`) |
+| Analytics page API | `server/analytics.ts` (`/api/workspaces/:id/analytics…`) |
 | Token encryption | `server/crypto.ts` (AES-256-GCM) |
 
 ## Environment
@@ -44,7 +47,7 @@ Meta require https: use a tunnel such as `cloudflared tunnel --url http://localh
 1. developers.tiktok.com → Manage apps → create an app. Platform: Web. Fill in the terms and privacy policy URLs
    (`${SITE_URL}/terms`, `${SITE_URL}/privacy`).
 2. Add products **Login Kit** and **Content Posting API**. In Content Posting API turn on **Direct Post**.
-3. Scopes: `user.info.basic`, `video.publish`.
+3. Scopes: `user.info.basic`, `video.publish` and `video.list` (post stats; see "Post stats" below).
 4. Login Kit → Redirect URI: `${SITE_URL}/api/accounts/callback/tiktok`.
 5. **Verify the media domain** (URL properties): photo posts use `PULL_FROM_URL`, so TikTok downloads each slide from
    `${SITE_URL}/api/publish-media/...`. Verify the `SITE_URL` domain (DNS TXT record) or the URL prefix
@@ -72,9 +75,11 @@ Tokens: access 24 hours, refresh 365 days (renewed automatically when publishing
 2. Add the **Instagram** product → "API setup with Instagram business login". Note the **Instagram app ID and secret**
    shown there (these are `INSTAGRAM_APP_ID` / `INSTAGRAM_APP_SECRET`).
 3. Business login settings → OAuth redirect URI: `${SITE_URL}/api/accounts/callback/instagram`.
-4. Permissions: `instagram_business_basic`, `instagram_business_content_publish`.
-5. **App Review**: request Advanced Access for both permissions (screencast of connecting and publishing), and complete
-   **Business Verification**. Until then only people with a role on the app (and test users) can connect.
+4. Permissions: `instagram_business_basic`, `instagram_business_content_publish` and
+   `instagram_business_manage_insights` (views and shares of published posts).
+5. **App Review**: request Advanced Access for all three permissions (screencast of connecting, publishing and the
+   analytics page), and complete **Business Verification**. Until then only people with a role on the app (and test
+   users) can connect.
 
 Only **professional accounts** (Business or Creator) work; personal accounts cannot log in through this flow. Reels
 are 3 s–15 min; carousels take up to 10 images (JPEG). Instagram downloads the media from our media links, which work
@@ -125,6 +130,51 @@ Tokens last 60 days. Refresh tokens are only issued to approved partner apps: wh
 otherwise the account turns "expired" after 60 days and the person reconnects (the accounts list shows it).
 API version header: `LinkedIn-Version: 202607` (`server/social/linkedin.ts`). LinkedIn supports each monthly version
 for about a year — move it forward at least yearly.
+
+## Post stats
+
+The cron reads the stats of posts published in the last 30 days: first about 30 minutes after publishing, every 3 hours
+for the first two days, then daily. Each pass (every 5 minutes) takes at most 40 posts on at most 10 accounts, one
+token refresh and a few calls per account, so it stays far inside the Workers subrequest limit; a failing account
+never stops the others. An expired or revoked token marks the account `expired`, as publishing does.
+
+| Network | Call | Numbers | Scope |
+| --- | --- | --- | --- |
+| YouTube | `GET /youtube/v3/videos?part=statistics&id=…` (50 IDs a call, 1 quota unit) | views, likes, comments (no shares) | `youtube.readonly` (already asked for) |
+| TikTok | `POST /v2/video/query/?fields=id,view_count,like_count,comment_count,share_count` (20 IDs a call) | views, likes, comments, shares | `video.list` (new) |
+| Instagram | `GET /v23.0/{media-id}?fields=like_count,comments_count` and `GET /v23.0/{media-id}/insights?metric=views,shares` | likes, comments; views and shares with insights | `instagram_business_manage_insights` (new) |
+| LinkedIn | none | — | Member post analytics (`r_member_postAnalytics`) is a restricted partner product: the page says "not shared" |
+
+- **New scopes mean existing connections must reconnect.** TikTok and Instagram connections made before this change
+  lack `video.list` / `instagram_business_manage_insights`; the analytics page asks people to reconnect (Instagram still
+  shows likes and comments meanwhile). Google connections already have `youtube.readonly` unless it was unticked.
+- **Review:** add `video.list` to the TikTok app (Login Kit scopes) and request
+  `instagram_business_manage_insights` in Meta App Review; both networks review new scopes before other people can grant
+  them. Until then, ask for them only from test users, or leave them out of `SCOPES` (the connection still works
+  without them: `exchange` only requires the publishing scopes).
+- TikTok returns stats only for public videos: private posts (an unaudited app) keep "TikTok shares stats for public
+  posts only".
+- These parsers are written against the documented answers and tested with mocked responses only; check them with a
+  real account of each network before relying on the numbers.
+
+## Tracked links and sales
+
+- `${SITE_URL}/go/<code>` redirects (302) to the workspace's target URL (or its website) with `utm_source=<network>`,
+  `utm_medium=social`, `utm_campaign=hookstreak`, `utm_content=<post ID or "bio">` and `hs=<code>`. Only the stored,
+  checked address is used (public http(s), not this site), so it can't be used as an open redirect.
+- Clicks are counted per link and UTC day (`link_clicks`). HEAD requests, prefetches, link previews and bots are
+  followed but not counted; the same address counts once per link in 10 minutes and at most 120 times an hour (hashed,
+  expiring `rate_limits` counters). Nothing about visitors is stored.
+- With "Links in captions" on, YouTube descriptions and LinkedIn posts get the post's link (`captionLink` in
+  `server/tracking.ts`, used by the Publication workflow). TikTok and Instagram captions can't hold clickable links:
+  the analytics page gives one "link in bio" per network instead.
+- `/t.js` (no cookies) keeps the `hs` code of the last tracked link in the customer site's localStorage for 30 days and
+  exposes `hookstreak('conversion', { value, currency, orderId })`, `hookstreak('code')` and `hookstreak('test')`. It
+  posts to `POST /api/t/<site key>` (CORS `*`, no credentials; registered before the Origin check). A shop's server can
+  post the same JSON with the `code` it saved at checkout. A sale is credited when its link was clicked in the 30 days
+  before; `orderId` repeats count once (only a SHA-256 of it is kept); value 0–1,000,000 with a 3-letter currency;
+  at most 300 reports an hour per address and 10,000 a day per site. The site key is public, so anyone holding it could
+  report made-up sales for that workspace: the limits bound it, and the numbers only ever affect that workspace's page.
 
 ## How publishing works
 

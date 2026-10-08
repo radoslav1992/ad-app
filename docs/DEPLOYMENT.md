@@ -17,8 +17,14 @@ npx wrangler r2 bucket create ad-app-media
 Then apply the schema (once, and again whenever a new file lands in `migrations/`):
 
 ```sh
-npm run db:remote                        # applies migrations/0001_initial.sql
+npm run db:remote                        # applies every migration not applied yet (0001_initial.sql, 0002_analytics.sql)
 ```
+
+**0002 (analytics):** run `npm run db:remote` *before* deploying the version that uses it. It only adds columns to
+`publications` and four new tables, so the version already running keeps working once it is applied. Wrangler records
+applied files in `d1_migrations`, so 0001 is not run again. To check: `npx wrangler d1 migrations list ad-app --remote`.
+The new social scopes (TikTok `video.list`, Instagram `instagram_business_manage_insights`) need the app changes and
+reviews in `docs/SOCIAL.md`; existing connections reconnect to allow stats.
 
 - **R2:** add a lifecycle rule to *abort incomplete multipart uploads after 1 day*. Do **not** add an object-expiry
   rule; the app deletes files itself.
@@ -111,8 +117,10 @@ You need the rights to everything you upload, including permission for every per
 
 ## Known limits
 
-- **Untested against real services:** the AI providers, the social networks and Stripe are covered by tests with
-  mocked responses only. None has been tried with live keys.
+- **Untested against real services:** the AI providers, the social networks (publishing and post stats) and Stripe are
+  covered by tests with mocked responses only. None has been tried with live keys.
+- **Sale reports are unauthenticated:** the site key in the snippet is public, so reports are rate-limited and deduped
+  but not verified. They only change that workspace's analytics.
 - **Renderer image:** the image has not been built in this environment (no Docker daemon); CI builds it. Its tests
   ran on FFmpeg 6.1, while the image uses Debian bookworm's FFmpeg 5.1.
 - **Social platform review:** each network has review steps; until TikTok audits the app, posts may be private.

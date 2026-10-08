@@ -1,10 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { CheckCircle2, Circle, Rocket, PenSquare, Share2, Zap, Building2, CalendarDays } from "lucide-react";
-import { api, fileUrl, number, useAuth, type Post } from "../lib";
+import { api, fileUrl, number, useApi, useAuth, type Post } from "../lib";
 import { useCurrentWorkspace } from "./workspace";
+import { compact, engagementOf, formatMoney, orDash } from "./stats";
 import { planById } from "../../shared/plans";
 import { formats } from "../../shared/formats";
+import type { AnalyticsResponse } from "../../shared/analytics";
 
 // The dashboard home: what is waiting, what is left in the plan, and the next steps to get publishing.
 type Counts = { blitz: number; making: number; approved: number; failed: number; total: number };
@@ -48,6 +50,7 @@ export function Home() {
           <span className="small muted">posts left · {number(Math.max(0, user.limit - user.used))} AI credits</span>
         </div>
       </div>
+      <AnalyticsSummary workspaceId={workspace.id} />
       <div className="grid two">
         <section className="card stack">
           <h2>Get set up</h2>
@@ -79,6 +82,31 @@ export function Home() {
         <Shortcut to="/app/brand" icon={<Building2 size={20} />} title="Brand" text="What every post is written from." />
       </div>
     </main>
+  );
+}
+/** The last 30 days in four numbers, from the analytics page's data. */
+function AnalyticsSummary({ workspaceId }: { workspaceId: string }) {
+  const { data: a } = useApi<AnalyticsResponse>(`/workspaces/${workspaceId}/analytics?days=30`);
+  if (!a) return null;
+  const t = a.totals;
+  const empty = !t.posts && !t.clicks && !t.conversions;
+  const revenue = formatMoney(t.revenue);
+  return (
+    <section className="card stack" style={{ marginBottom: 18 }} aria-labelledby="home-analytics">
+      <div className="row between"><h2 id="home-analytics">Last 30 days</h2><Link to="/app/analytics" className="small">Analytics</Link></div>
+      {empty ? (
+        <p className="muted">
+          Views, likes, clicks and sales show up here a few hours after your first posts go out. <Link to="/app/analytics#tracking">Set up click tracking</Link>
+        </p>
+      ) : (
+        <div className="an-home-stats">
+          <div><strong>{orDash(t.views)}</strong><span>views</span></div>
+          <div><strong>{orDash(engagementOf(t))}</strong><span>likes, comments and shares</span></div>
+          <div><strong>{compact(t.clicks)}</strong><span>clicks to your site</span></div>
+          <div><strong>{compact(t.conversions)}</strong><span>{t.conversions === 1 ? "sale" : "sales"}{revenue ? ` · ${revenue}` : ""}</span></div>
+        </div>
+      )}
+    </section>
   );
 }
 function Stat({ label, value, to }: { label: string; value?: number; to: string }) {

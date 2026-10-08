@@ -23,6 +23,7 @@ const Create = named(() => import("./app/Create"), "Create");
 const Content = named(() => import("./app/Content"), "Content");
 const Library = named(() => import("./app/Library"), "LibraryPage");
 const Calendar = named(() => import("./app/Calendar"), "CalendarPage");
+const Analytics = named(() => import("./app/Analytics"), "AnalyticsPage");
 const Accounts = named(() => import("./app/Accounts"), "AccountsPage");
 const Studio = named(() => import("./app/Studio"), "StudioPage");
 const Characters = named(() => import("./app/Characters"), "CharactersPage");
@@ -133,6 +134,7 @@ export function App() {
             <Route path="content" element={<Content />} />
             <Route path="library" element={<Library />} />
             <Route path="calendar" element={<Calendar />} />
+            <Route path="analytics" element={<Analytics />} />
             <Route path="accounts" element={<Accounts />} />
             <Route path="studio" element={<Studio />} />
             <Route path="characters" element={<Characters />} />

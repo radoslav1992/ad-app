@@ -353,7 +353,7 @@ function privacy(op: Operator): Section[] {
           </li>
           <li>
             <strong>Connected social accounts:</strong> access tokens (stored encrypted), the account's name, ID and picture, and information about posts we
-            publish for you (schedule, status, links and error messages).
+            publish for you (schedule, status, links, error messages, and the views, likes, comments and shares the network reports for them).
           </li>
           <li>
             <strong>Billing:</strong> your plan, subscription status and invoices. Card details are collected and stored by Stripe; we never see your full card
@@ -438,7 +438,7 @@ function privacy(op: Operator): Section[] {
                 </tr>
                 <tr>
                   <th scope="row">TikTok, Meta (Instagram), Google (YouTube), LinkedIn</th>
-                  <td>Publishing — only when you connect an account</td>
+                  <td>Publishing and reading your posts' stats — only when you connect an account</td>
                   <td>The posts you schedule, their captions, and the account tokens</td>
                 </tr>
               </tbody>
@@ -447,6 +447,26 @@ function privacy(op: Operator): Section[] {
           <p>
             These providers process data under their own security and privacy commitments. We may also disclose data when the law requires it, to protect
             people's safety or our rights, or to a buyer if our business is sold (you will be told first, and this policy will keep applying).
+          </p>
+        </>
+      ),
+    },
+    {
+      id: "clicks",
+      title: "Clicks and sales we count for customers",
+      body: (
+        <>
+          <p>
+            When you turn on tracked links or add our sales snippet to your website, we count for you how often each tracked link is followed (a number per
+            link and day) and the sales or sign-ups your site reports to us (the amount, the currency and a one-way hash of the order ID, so a repeat counts
+            once). We don't keep anything about the people who click or buy: no names, email addresses, IP addresses, cookies or device fingerprints. To keep
+            the numbers honest we skip link previews and bots, and use rate-limit counters keyed by a hash of the visitor's IP address that expire within the
+            hour.
+          </p>
+          <p>
+            The snippet sets no cookies. It keeps the code of the last tracked link a visitor arrived from in your website's own browser storage for 30 days,
+            so a later sale can be credited to the post that brought them. Counts are kept for 13 months. For these counts we act on your behalf, and you
+            should mention them in your own website's privacy notice.
           </p>
         </>
       ),
@@ -477,6 +497,7 @@ function privacy(op: Operator): Section[] {
           <li>Billing records: as long as tax and accounting law requires. Stripe keeps its own records under its policies.</li>
           <li>Contact messages: as long as needed to answer you and handle any follow-up.</li>
           <li>Security data such as sign-in attempts and rate-limit counters expires automatically, usually within hours to days.</li>
+          <li>Daily click counts and reported sales from tracked links: 13 months.</li>
           <li>Posts you published stay on the social networks until you remove them there.</li>
         </ul>
       ),

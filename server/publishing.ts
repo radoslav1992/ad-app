@@ -73,9 +73,9 @@ async function insertPublications(env: Env, post: PostRow, accounts: AccountRow[
     throw e;
   }
 }
-/** A publication with its account, as the browser sees it. */
+/** A publication with its account (and its stats from the network, once read), as the browser sees it. */
 const SELECT_PUBLICATION =
-  "SELECT p.id,p.post_id AS postId,p.account_id AS accountId,p.platform,p.scheduled_at AS scheduledAt,p.status,p.attempts,p.url,p.external_id AS externalId,p.error,p.published_at AS publishedAt,COALESCE(a.name,NULLIF(p.account_name,''),'Disconnected account') AS accountName,a.handle AS accountHandle FROM publications p LEFT JOIN social_accounts a ON a.id=p.account_id";
+  "SELECT p.id,p.post_id AS postId,p.account_id AS accountId,p.platform,p.scheduled_at AS scheduledAt,p.status,p.attempts,p.url,p.external_id AS externalId,p.error,p.published_at AS publishedAt,p.views,p.likes,p.comments,p.shares,p.metrics_at AS metricsAt,COALESCE(a.name,NULLIF(p.account_name,''),'Disconnected account') AS accountName,a.handle AS accountHandle FROM publications p LEFT JOIN social_accounts a ON a.id=p.account_id";
 
 publishing.post("/posts/:id/schedule", async (c) => {
   const user = c.get("user");
