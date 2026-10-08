@@ -7,6 +7,7 @@ import { del, errorText, fileUrl, patch, post as send, useApi, useAuth, usePoll,
 import { Modal, Spinner, Switch, useToast } from "../ui";
 import { useCurrentWorkspace, useWorkspace } from "./workspace";
 import { PostPlayer } from "./PostView";
+import { Views, plural, since } from "./stats";
 import {
   AccountAvatar, DATE_TIME, HORIZON_SECONDS, LEAD_SECONDS, PlatformDots, ScheduleDialog, StatusChip, formatAt, formatTime, fromInputValue, handleText,
   statusLabels, toInputValue, wallClock, zoneLabel, zoneOf,
@@ -45,6 +46,11 @@ function viewDays(view: View, anchor: Civil) {
   return Array.from({ length: Math.round((utcOf(end) - utcOf(start)) / DAY_MS) }, (_, i) => addDays(start, i));
 }
 
+/** Lifetime counts from the network on a published publication (null until read, and always on LinkedIn). */
+type Stats = { views?: number | null; likes?: number | null; comments?: number | null; shares?: number | null; metricsAt?: number | null };
+/** Views of a post on all the accounts it went to, or null when no network has reported any. */
+const viewsOf = (pubs: Publication[]) =>
+  pubs.reduce<number | null>((n, p) => ((p as Stats).views == null ? n : (n ?? 0) + (p as Stats).views!), null);
 /** One post at one time on the calendar (its publications to several accounts together). */
 type Item = { key: string; postId: string; at: number; hook: string; format: string; pubs: Publication[]; status: PublicationStatus };
 const rank: PublicationStatus[] = ["failed", "publishing", "scheduled", "published", "canceled"];
@@ -156,17 +162,21 @@ function CalendarScreen({ workspace }: { workspace: Workspace }) {
   const openItem = (item: Item) => setDetail(item.postId);
   const expired = (accounts.data?.accounts || []).filter((a) => a.status !== "active");
 
-  const itemButton = (item: Item, compact: boolean) => (
-    <button key={item.key} type="button" className={`sc-item ${item.status}`} onClick={() => openItem(item)}
-      aria-label={`${formatTime(item.at, tz)}, ${[...new Set(item.pubs.map((p) => platforms[p.platform]?.name))].join(", ")}, ${statusLabels[item.status]}: ${item.hook || "Untitled post"}`}>
-      <span className="sc-item-top">
-        <PlatformDots list={item.pubs.map((p) => p.platform)} />
-        <time dateTime={new Date(item.at * 1000).toISOString()}>{formatTime(item.at, tz)}</time>
-        <StatusChip status={item.status} compact={compact} />
-      </span>
-      <span className="sc-hook">{item.hook || "Untitled post"}</span>
-    </button>
-  );
+  const itemButton = (item: Item, compact: boolean) => {
+    const views = item.status === "published" ? viewsOf(item.pubs) : null;
+    return (
+      <button key={item.key} type="button" className={`sc-item ${item.status}`} onClick={() => openItem(item)}
+        aria-label={`${formatTime(item.at, tz)}, ${[...new Set(item.pubs.map((p) => platforms[p.platform]?.name))].join(", ")}, ${statusLabels[item.status]}${views !== null ? `, ${plural(views, "view")}` : ""}: ${item.hook || "Untitled post"}`}>
+        <span className="sc-item-top">
+          <PlatformDots list={item.pubs.map((p) => p.platform)} />
+          <time dateTime={new Date(item.at * 1000).toISOString()}>{formatTime(item.at, tz)}</time>
+          <StatusChip status={item.status} compact={compact} />
+        </span>
+        <span className="sc-hook">{item.hook || "Untitled post"}</span>
+        {views !== null && <Views views={views} short={compact} />}
+      </button>
+    );
+  };
 
   return (
     <main className="page sc-page">
@@ -426,6 +436,7 @@ function PublicationRow({ pub, tz, busy, disabled, onMove, onCancel, onRetry }: 
       {pub.status === "failed" && pub.error && <p className="notice bad small">{pub.error}</p>}
       {pub.status === "publishing" && <p className="small muted">Sending it to {name} now. This usually takes a minute or two.</p>}
       {pub.status === "published" && !safeUrl && <p className="small muted">Published. {name} didn't share a link (private posts get none).</p>}
+      {pub.status === "published" && <PublicationStats pub={pub} name={name} />}
 
       {pub.status === "scheduled" && !confirming && (
         <form className="sc-move" onSubmit={submit}>
@@ -460,6 +471,18 @@ function PublicationRow({ pub, tz, busy, disabled, onMove, onCancel, onRetry }: 
       )}
     </li>
   );
+}
+
+/** The network's counts for a published post, when it shares them. */
+function PublicationStats({ pub, name }: { pub: Publication; name: string }) {
+  const s = pub as Publication & Stats;
+  if (pub.platform === "linkedin") return null;
+  if (!s.metricsAt) return <p className="small muted an-pub-stats">Stats from {name} show up here within a few hours of publishing.</p>;
+  const parts = [
+    s.views != null && plural(s.views, "view"), s.likes != null && plural(s.likes, "like"),
+    s.comments != null && plural(s.comments, "comment"), s.shares != null && plural(s.shares, "share"),
+  ].filter(Boolean);
+  return <p className="small an-pub-stats">{parts.join(" · ") || "No stats yet"} <span className="muted">· updated {since(s.metricsAt)}</span></p>;
 }
 
 /* ------------------------------------------------------------------------------------------------------------------ */

@@ -23,6 +23,8 @@ import { characters, studio } from "./characters";
 import { library } from "./library";
 import { accounts } from "./accounts";
 import { publishing, publishMedia } from "./publishing";
+import { tracking } from "./tracking";
+import { analytics } from "./analytics";
 import { maintenance } from "./maintenance";
 export { ContentGeneration } from "./content-workflow";
 export { WorkspaceScan } from "./scan-workflow";
@@ -30,6 +32,8 @@ export { Publication } from "./publish-workflow";
 export { MediaRenderer } from "./renderer";
 
 const app = new Hono<App>();
+/** Tracked links, the site script and its sale reports: used by other sites, never documents of ours. */
+const TRACKING = /^\/(go\/|t\.js$|api\/t\/)/;
 app.use("*", async (c, next) => {
   await next();
   c.header("X-Content-Type-Options", "nosniff");
@@ -38,7 +42,9 @@ app.use("*", async (c, next) => {
   c.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   c.header(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; media-src 'self' blob:; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+    TRACKING.test(c.req.path)
+      ? "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+      : "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; media-src 'self' blob:; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
   );
   if (new URL(c.req.url).protocol === "https:") c.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   // Media files set their own private caching; every other API answer is never cached.
@@ -57,6 +63,9 @@ app.use("/api/*", async (c, next) => {
   const max = PART_PATH.test(c.req.path) ? 8 * 1024 * 1024 + 1024 : ADMIN_UPLOAD.test(c.req.path) ? 60 * 1024 * 1024 : 1024 * 1024;
   return bodyLimit({ maxSize: max, onError: (c) => c.json({ error: "The file or request is too large." }, 413) })(c, next);
 });
+// Tracked links (/go/<code>), the site script (/t.js) and sale reports (/api/t/<site key>) come from other sites and
+// servers with no session: they answer before the Origin check (CORS headers in tracking.ts).
+app.route("/", tracking);
 // Every state change must come from this site's pages (CSRF), except the signed Stripe webhook.
 app.use("/api/*", async (c, next) => {
   if (!["GET", "HEAD"].includes(c.req.method) && c.req.path !== "/api/billing/webhook") {
@@ -112,6 +121,7 @@ app.route("/api/studio", studio);
 app.route("/api/library", library);
 app.route("/api/accounts", accounts);
 app.route("/api", publishing);
+app.route("/api", analytics);
 app.route("/api/settings", settings);
 app.route("/api/admin", admin);
 app.all("/api/*", (c) => c.json({ error: "Not found." }, 404));

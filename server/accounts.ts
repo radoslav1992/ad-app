@@ -13,6 +13,7 @@ import { isPlatform, platformIds, platforms, type PlatformId } from "../shared/s
 import { socialPlatforms, SocialError } from "./social";
 import { codeVerifier } from "./social/http";
 import { connectionExpiry } from "./social/credentials";
+import { STATS_WINDOW } from "./metrics";
 
 // Connecting social accounts with OAuth (one per network and workspace), listing and disconnecting them.
 // Tokens are sealed with TOKEN_ENCRYPTION_KEY and never leave the server.
@@ -134,6 +135,11 @@ accounts.get("/callback/:platform", async (c) => {
       uid(), user.id, workspaceId, platform, profile.externalId.slice(0, 200), text(profile.name, 100) || platforms[platform].name,
       text(profile.handle, 100), avatar, await seal(c.env, tokens), connectionExpiry(platform, tokens), t, t,
     ).run();
+    // A reconnection may grant the stats scopes: its recent posts are read again on the next stats pass (and stop
+    // asking to reconnect at once).
+    await c.env.DB.prepare(
+      "UPDATE publications SET metrics_checked_at=NULL,metrics_error=NULL WHERE status='published' AND published_at>? AND account_id=(SELECT id FROM social_accounts WHERE workspace_id=? AND platform=? AND external_id=? AND user_id=?)",
+    ).bind(t - STATS_WINDOW, workspaceId, platform, profile.externalId.slice(0, 200), user.id).run();
     return c.redirect(back(workspaceId, { connected: platform }), 302);
   } catch (e) {
     if (e instanceof HTTPException && e.status === 404) return c.redirect(back(null, { error: "failed" }), 302);

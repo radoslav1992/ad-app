@@ -80,3 +80,9 @@ export const hexChallenge = async (verifier: string) =>
   Array.from(await digest(verifier), (b) => b.toString(16).padStart(2, "0")).join("");
 
 export const bearer = (accessToken: string) => ({ Authorization: `Bearer ${accessToken}` });
+
+/** A count from a stats answer (a JSON number, or a digit string as Google sends them); null when absent or odd. */
+export function count(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" && /^\d{1,16}$/.test(v) ? Number(v) : NaN;
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}

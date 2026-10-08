@@ -6,9 +6,12 @@ import { dispatchRun } from "./posts";
 import { failRun } from "./content-workflow";
 import { failAsset } from "./media";
 import { createBatch, workspaceSettings, writeSpecs } from "./workspaces";
+import { refreshMetrics } from "./metrics";
+import { pruneAnalytics } from "./analytics";
 
-// Cron (every minute): due posts are published at once; every five minutes stuck work is recovered; once an hour
-// files are cleaned up, automations make their daily posts and (at 03:17 UTC) Stripe is reconciled.
+// Cron (every minute): due posts are published at once; every five minutes stuck work is recovered and a batch of
+// post stats is read from the networks; once an hour files are cleaned up, automations make their daily posts and
+// (at 03:17 UTC) Stripe is reconciled.
 async function stage(name: string, work: () => Promise<unknown>) {
   try {
     await work();
@@ -20,6 +23,8 @@ export async function maintenance(e: Env, at = Date.now()) {
   const d = new Date(at), minute = d.getUTCMinutes();
   await stage("publish", () => dispatchDue(e));
   if (minute % 5 === 0) await stage("runs", () => reconcileRuns(e));
+  // Offset from the runs stage; each pass reads at most 40 posts (metrics.ts).
+  if (minute % 5 === 2) await stage("stats", () => refreshMetrics(e));
   if (minute === 17) {
     await stage("cleanup", () => drainCleanup(e));
     await stage("uploads", () => expireUploads(e));
@@ -94,6 +99,7 @@ async function housekeeping(e: Env) {
     e.DB.prepare("DELETE FROM oauth_states WHERE expires_at<?").bind(t),
     e.DB.prepare("DELETE FROM billing_events WHERE created_at<?").bind(t - 90 * DAY),
   ]);
+  await pruneAnalytics(e, t);
 }
 
 /** Automations: once a day, workspaces that asked for it get fresh posts for review (when their queue runs low). */

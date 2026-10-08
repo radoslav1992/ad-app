@@ -2,8 +2,8 @@
 
 ## Stack
 
-React 19 + React Router + Vite (client, `src/`), a Hono Worker (`server/`), Cloudflare D1 (one schema in
-`migrations/0001_initial.sql`), a private R2 bucket (`MEDIA`), three Workflows, a Containers pool of three FFmpeg
+React 19 + React Router + Vite (client, `src/`), a Hono Worker (`server/`), Cloudflare D1 (the schema in
+`migrations/`: `0001_initial.sql`, then `0002_analytics.sql`, which only adds), a private R2 bucket (`MEDIA`), three Workflows, a Containers pool of three FFmpeg
 renderers (`renderer/server.py`) and the Workers AI binding for text. Contracts shared by the client and server live
 in `shared/` (formats/specs, plans and credits, captions and on-screen text layout, schedule, renderer payloads).
 
@@ -79,6 +79,21 @@ reposting. It then polls the network and records the URL. TikTok and Instagram f
 `/api/publish-media/:id/:n?token=`, which works only while that publication is publishing. OAuth tokens are
 AES-GCM-encrypted with `TOKEN_ENCRYPTION_KEY`. See `docs/SOCIAL.md`.
 
+## Analytics
+
+- **Post stats.** Every 5 minutes the cron reads a bounded batch of published posts' lifetime views, likes, comments
+  and shares from the networks (`server/metrics.ts`, `stats()` in each network client): new posts every 3 hours for two
+  days, then daily, for 30 days. They are stored on `publications` (`views` … `metrics_at`, `metrics_error`). A
+  number a network doesn't report stays NULL and shows as "–"; LinkedIn shares none.
+- **Tracked links.** `/go/<code>` redirects to the workspace's own target URL with UTM tags and `hs=<code>`, and counts
+  clicks per link and UTC day (`tracked_links`, `link_clicks`). Captions on YouTube and LinkedIn can carry the post's
+  link; TikTok and Instagram get one "link in bio" each.
+- **Sales.** The customer's site loads `/t.js`, which remembers the last `hs` code for 30 days in that site's
+  localStorage and reports sales to `POST /api/t/<site key>` (also callable from their server). Sales are credited to
+  the post and network of that link (`conversions`); unmatched ones count as "not from a tracked link".
+- **The page.** `GET /api/workspaces/:id/analytics?days=7|30` adds the stored numbers up (totals, per network, per
+  post, per day; money per currency, never converted). Details and limits: `docs/SOCIAL.md`.
+
 ## Accounts, plans and credits
 
 Auth, sessions, rate limits and Stripe come from rech-bg. Each paid period is a usage window
@@ -96,6 +111,9 @@ Auth, sessions, rate limits and Stripe come from rech-bg. Each paid period is a 
 - **Untrusted text:** website content, prompts and model answers are treated as data. Model output is cleaned and
   schema-validated before use.
 - **Logs:** provider messages are never logged or shown; failures become short codes with plain-English messages.
+- **Tracking:** click and sale counting keeps no visitor data (no IP addresses, cookies or fingerprints; order IDs only
+  as hashes). The public tracking routes answer before the Origin check with their own CORS headers and a
+  `default-src 'none'` policy, and a link can only lead to its workspace's checked address.
 - **AI marking:** AI-made media is marked in its MP4/JPEG metadata (IPTC digital source type). The saved render also
   carries `{"ai":true}` in `media_assets.meta`, which sets the networks' AI labels on publishing (TikTok `is_aigc`,
   YouTube `containsSyntheticMedia`).

@@ -114,7 +114,7 @@ describe("connecting accounts", () => {
     const q = url.searchParams;
     expect(q.get("client_key")).toBe("tt-key");
     expect(q.get("response_type")).toBe("code");
-    expect(q.get("scope")).toBe("user.info.basic,video.publish");
+    expect(q.get("scope")).toBe("user.info.basic,video.publish,video.list");
     expect(q.get("redirect_uri")).toBe(`${SITE}/api/accounts/callback/tiktok`);
     expect(q.get("code_challenge_method")).toBe("S256");
     const state = q.get("state")!;
@@ -146,7 +146,7 @@ describe("connecting accounts", () => {
     const s = setup();
     const ig = await connect(s, "instagram");
     expect(ig.origin + ig.pathname).toBe("https://www.instagram.com/oauth/authorize");
-    expect(ig.searchParams.get("scope")).toBe("instagram_business_basic,instagram_business_content_publish");
+    expect(ig.searchParams.get("scope")).toBe("instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights");
     expect(ig.searchParams.get("client_id")).toBe("ig-app");
     const li = await connect(s, "linkedin");
     expect(li.origin + li.pathname).toBe("https://www.linkedin.com/oauth/v2/authorization");
