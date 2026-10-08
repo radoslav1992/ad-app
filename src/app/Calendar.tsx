@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import {
   CalendarPlus, ChevronLeft, ChevronRight, Clock, ExternalLink, Film, Inbox, Plus, RotateCcw, Save, Trash2, X,
 } from "lucide-react";
-import { api, del, errorText, fileUrl, patch, post as send, useApi, useAuth, usePoll, type Post, type Workspace } from "../lib";
+import { del, errorText, fileUrl, patch, post as send, useApi, useAuth, usePoll, type Post, type Workspace } from "../lib";
 import { Modal, Spinner, Switch, useToast } from "../ui";
 import { useCurrentWorkspace, useWorkspace } from "./workspace";
 import { PostPlayer } from "./PostView";
@@ -49,8 +49,9 @@ function viewDays(view: View, anchor: Civil) {
 type Item = { key: string; postId: string; at: number; hook: string; format: string; pubs: Publication[]; status: PublicationStatus };
 const rank: PublicationStatus[] = ["failed", "publishing", "scheduled", "published", "canceled"];
 const combined = (pubs: Publication[]) => rank.find((s) => pubs.some((p) => p.status === s)) || "scheduled";
-/** Whether a publication changes soon on its own (publishing now, or due within the next minutes). */
-const moving = (p: Publication) => p.status === "publishing" || (p.status === "scheduled" && p.scheduledAt * 1000 < Date.now() + 120_000);
+/** Whether a publication changes soon on its own (publishing now, or due around now). */
+const moving = (p: Publication) =>
+  p.status === "publishing" || (p.status === "scheduled" && Math.abs(p.scheduledAt * 1000 - Date.now()) < 10 * 60_000);
 
 export function CalendarPage() {
   const workspace = useCurrentWorkspace();
@@ -236,7 +237,8 @@ function CalendarScreen({ workspace }: { workspace: Workspace }) {
       </div>
 
       {detail && !scheduling && (
-        <PostPanel postId={detail} tz={tz} onClose={closeDetail} onChanged={changed} onScheduleMore={setScheduling} />
+        <PostPanel postId={detail} tz={tz} onClose={closeDetail} onScheduleMore={setScheduling}
+          onChanged={() => { setScheduledIds((s) => { const n = new Set(s); n.delete(detail); return n; }); changed(); }} />
       )}
       {scheduling && (
         <ScheduleDialog post={scheduling} workspace={workspace} onClose={closeScheduling} onScheduled={onScheduled} />
@@ -388,7 +390,14 @@ function PublicationRow({ pub, tz, busy, disabled, onMove, onCancel, onRetry }: 
 }) {
   const original = toInputValue(pub.scheduledAt, tz);
   const [value, setValue] = useState(original);
-  const [confirming, setConfirming] = useState(false);
+  const [confirming, setConfirmingState] = useState(false);
+  const keepButton = useRef<HTMLButtonElement>(null);
+  const cancelButton = useRef<HTMLButtonElement>(null);
+  const setConfirming = (on: boolean) => {
+    setConfirmingState(on);
+    // Focus follows the swap between "Cancel post" and its confirmation.
+    requestAnimationFrame(() => (on ? keepButton : cancelButton).current?.focus());
+  };
   const [error, setError] = useState<string | null>(null);
   const [bounds] = useState(() => ({ min: Date.now() / 1000 + LEAD_SECONDS + 60, max: Date.now() / 1000 + HORIZON_SECONDS - 3600 }));
   const name = platforms[pub.platform]?.name || "the network";
@@ -424,7 +433,7 @@ function PublicationRow({ pub, tz, busy, disabled, onMove, onCancel, onRetry }: 
           <input id={inputId} type="datetime-local" className="input sc-move-input" value={value} onChange={(e) => setValue(e.target.value)}
             min={toInputValue(bounds.min, tz)} max={toInputValue(bounds.max, tz)} aria-describedby={error ? `${inputId}-error` : undefined} aria-invalid={!!error} />
           <button type="submit" className="btn sm" disabled={disabled || value === original}>{busy ? <Spinner label="Moving" /> : <Clock size={14} aria-hidden="true" />} Move</button>
-          <button type="button" className="btn sm danger" disabled={disabled} onClick={() => setConfirming(true)}><X size={14} aria-hidden="true" /> Cancel post</button>
+          <button ref={cancelButton} type="button" className="btn sm danger" disabled={disabled} onClick={() => setConfirming(true)}><X size={14} aria-hidden="true" /> Cancel post</button>
           {error && <span id={`${inputId}-error`} className="error small" role="alert">{error}</span>}
         </form>
       )}
@@ -432,7 +441,7 @@ function PublicationRow({ pub, tz, busy, disabled, onMove, onCancel, onRetry }: 
         <div className="notice warn sc-confirm" role="alertdialog" aria-label="Cancel this post?">
           <span>Cancel this post on {pub.accountName}? It won't be published there.</span>
           <span className="row">
-            <button type="button" className="btn sm" onClick={() => setConfirming(false)} autoFocus>Keep it</button>
+            <button ref={keepButton} type="button" className="btn sm" onClick={() => setConfirming(false)}>Keep it</button>
             <button type="button" className="btn sm danger" disabled={disabled} onClick={onCancel}>{busy ? <Spinner label="Canceling" /> : <Trash2 size={14} aria-hidden="true" />} Cancel post</button>
           </span>
         </div>
@@ -457,41 +466,17 @@ function PublicationRow({ pub, tz, busy, disabled, onMove, onCancel, onRetry }: 
 /* Approved posts without a time                                                                                      */
 
 function ApprovedTray({ workspace, known, version, onSchedule }: { workspace: Workspace; known: Set<string>; version: number; onSchedule: (post: Post) => void }) {
-  const postsQ = useApi<{ posts: Post[] }>(`/posts?workspace=${workspace.id}&view=approved&limit=50`);
-  // Posts outside the loaded calendar ranges are checked one by one (whether any publication exists).
-  const [checked, setChecked] = useState<Record<string, boolean>>({});
-  const inflight = useRef(new Set<string>());
-  const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  // The server lists approved, finished posts with no time on any account yet.
+  const postsQ = useApi<{ posts: Post[] }>(`/posts?workspace=${workspace.id}&view=unscheduled&limit=50`);
   const first = useRef(true);
   const { reload } = postsQ;
   useEffect(() => {
     if (first.current) { first.current = false; return; }
-    setChecked({});
     void reload();
   }, [version, reload]);
   const posts = postsQ.data?.posts || [];
-  const candidates = posts.filter((p) => !known.has(p.id));
-  const pending = candidates.filter((p) => checked[p.id] === undefined).map((p) => p.id);
-  const pendingKey = pending.join(",");
-  useEffect(() => {
-    const queue = pendingKey ? pendingKey.split(",").filter((id) => !inflight.current.has(id)) : [];
-    if (!queue.length) return;
-    queue.forEach((id) => inflight.current.add(id));
-    const worker = async () => {
-      for (let id = queue.shift(); id; id = queue.shift()) {
-        let has = false;
-        try {
-          const r = await api<{ publications: Publication[] }>(`/posts/${id}/publications`);
-          has = r.publications.some((p) => p.status !== "canceled");
-        } catch { /* shown in the tray; scheduling twice is refused by the server */ }
-        inflight.current.delete(id);
-        if (mounted.current) setChecked((c) => ({ ...c, [id]: has }));
-      }
-    };
-    void Promise.all([worker(), worker(), worker()]);
-  }, [pendingKey]);
-  const waiting = candidates.filter((p) => checked[p.id] === false);
+  // A post scheduled a moment ago may still be in the last answer.
+  const waiting = posts.filter((p) => !known.has(p.id));
   return (
     <section className="card sc-tray" aria-labelledby="sc-tray-title">
       <div className="row between">
@@ -524,8 +509,7 @@ function ApprovedTray({ workspace, known, version, onSchedule }: { workspace: Wo
               })}
             </ul>
           )}
-          {pending.length > 0 && <p className="small muted row"><Spinner label="Checking" /> Checking {pending.length} more…</p>}
-          {!waiting.length && !pending.length && (
+          {!waiting.length && (
             <div className="empty sc-tray-empty">
               <p>Every approved post has a time.</p>
               <Link to="/app/blitz" className="btn sm">Approve more in Blitz</Link>

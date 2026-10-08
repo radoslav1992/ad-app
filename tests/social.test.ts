@@ -348,7 +348,8 @@ describe("connecting accounts", () => {
     expect((await call(worker, s.env, "DELETE", `/api/accounts/${accountId}`, undefined, other.cookie)).status).toBe(404);
     const done = await call(worker, s.env, "DELETE", `/api/accounts/${accountId}`, undefined, s.user.cookie);
     expect(done.status).toBe(200);
-    expect(s.sqlite.prepare("SELECT COUNT(*) AS n FROM publications").get()).toMatchObject({ n: 0 });
+    // A post still scheduled to it is cancelled and kept (with the account's name), not deleted.
+    expect(s.sqlite.prepare("SELECT status,account_id FROM publications").get()).toEqual({ status: "canceled", account_id: null });
   });
 });
 

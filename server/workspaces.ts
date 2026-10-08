@@ -86,10 +86,11 @@ workspaces.patch("/:id", async (c) => {
   const profile = d.profile ? profileSchema.parse({ ...workspaceProfile(w), ...d.profile }) : workspaceProfile(w);
   const settings = d.settings ? settingsSchema.parse({ ...workspaceSettings(w), ...d.settings }) : workspaceSettings(w);
   if (!validZone(settings.schedule.timezone)) throw new HTTPException(400, { message: "Choose a valid time zone." });
+  // Default accounts are kept only while they are connected to this workspace (a stale ID is dropped, not refused).
   if (settings.schedule.accounts.length) {
-    const owned = (await c.env.DB.prepare(`SELECT id FROM social_accounts WHERE workspace_id=? AND id IN (${settings.schedule.accounts.map(() => "?").join(",")})`)
-      .bind(w.id, ...settings.schedule.accounts).all()).results;
-    if (owned.length !== settings.schedule.accounts.length) throw new HTTPException(400, { message: "Choose accounts connected to this workspace." });
+    const owned = new Set((await c.env.DB.prepare(`SELECT id FROM social_accounts WHERE workspace_id=? AND id IN (${settings.schedule.accounts.map(() => "?").join(",")})`)
+      .bind(w.id, ...settings.schedule.accounts).all<{ id: string }>()).results.map((r) => r.id));
+    settings.schedule.accounts = settings.schedule.accounts.filter((id) => owned.has(id));
   }
   const name = d.name ?? w.name;
   if (d.name) profile.name = d.name;

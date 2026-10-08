@@ -63,7 +63,8 @@
 .lib-media { position: relative; aspect-ratio: 1; background: #e9ebef; overflow: hidden; }
 .lib-card.tall .lib-media { aspect-ratio: 9 / 16; }
 .lib-media img, .lib-media video { width: 100%; height: 100%; object-fit: cover; }
-.lib-media .open { position: absolute; inset: 0; border: 0; padding: 0; background: transparent; cursor: zoom-in; }
+.lib-media .open { position: absolute; inset: 0; border: 0; padding: 0; background: transparent; cursor: zoom-in; border-radius: 0; }
+.lib-media .open:focus-visible, .pick-item:focus-visible, .photo-slot:focus-visible { outline-offset: -4px; }
 .lib-state { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 14px; font-size: 13px; color: var(--muted); gap: 8px; background: #eef0f3; }
 .lib-state.bad { color: #a3191f; background: #fdecec; }
 .lib-card-body { padding: 10px 12px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -159,6 +160,8 @@
 .tag-editor .tag span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tag-editor .tag button { border: 0; background: none; cursor: pointer; padding: 3px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); }
 .tag-editor .tag button:hover { background: rgba(0, 0, 0, 0.07); color: var(--text); }
+.tag-editor .tag .tag-text { display: block; padding: 0; border-radius: 4px; min-width: 0; color: inherit; font: inherit; cursor: text; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag-editor .tag .tag-text:hover { background: none; text-decoration: underline; }
 .tag-editor input { flex: 1; min-width: 150px; border: 0; outline: none; padding: 6px; font-size: 14px; background: transparent; }
 .color-field { display: flex; gap: 10px; align-items: center; }
 .color-field input[type="color"] { width: 48px; height: 46px; border: 1px solid var(--line-2); border-radius: 12px; padding: 3px; background: #fff; cursor: pointer; flex: none; }

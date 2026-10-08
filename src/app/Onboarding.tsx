@@ -233,7 +233,11 @@ function Welcome({ name, ws, busy, onDone }: { name: string; ws: Workspace | nul
 
 function Analyze({ ws, busy, onBack, onDone }: { ws: Workspace; busy: boolean; onBack: () => void; onDone: (body: { website: string } | { description: string }) => void }) {
   const [mode, setMode] = useState<"website" | "description">(ws.description && !ws.website ? "description" : "website");
-  const [website, setWebsite] = useState(ws.website || "");
+  // A website typed on the landing page before signing up is waiting here.
+  const [website, setWebsite] = useState(() => {
+    if (ws.website) return ws.website;
+    try { return localStorage.getItem("pl-signup-website") || ""; } catch { return ""; }
+  });
   const [description, setDescription] = useState(ws.description || "");
   const valid = mode === "website" ? website.trim().length > 3 : description.trim().length >= 20;
   return (

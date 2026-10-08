@@ -280,44 +280,44 @@ function NewCreatorModal({ onClose, onStarted }: { onClose: () => void; onStarte
         ]} />
       </div>
       <div {...tabPanel("new-creator", mode)}>
-      <form id="new-creator" className="stack" onSubmit={submit} noValidate>
-        {mode === "photo" && (
-          <div className="photo-pick">
-            <button type="button" className={`photo-slot${photo ? " filled" : ""}`} onClick={() => setPicking(true)} aria-label={photo ? `Change the photo (${photo.name})` : "Choose a photo"}>
-              {photo ? <img src={photo.url} alt="" /> : <><Camera size={26} aria-hidden="true" />Choose a photo</>}
-            </button>
-            <div className="stack">
-              <p className="small muted">A clear, front-facing photo of one person from the chest up, in good light. Upload one or pick it from your Library. It's free.</p>
-              {photo && <button type="button" className="btn sm" onClick={() => setPicking(true)} style={{ alignSelf: "flex-start" }}>Change photo</button>}
-              <label className="check">
-                <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
-                <span>This is me, or I have the person's permission to make AI videos of them.</span>
-              </label>
+        <form id="new-creator" className="stack" onSubmit={submit} noValidate>
+          {mode === "photo" && (
+            <div className="photo-pick">
+              <button type="button" className={`photo-slot${photo ? " filled" : ""}`} onClick={() => setPicking(true)} aria-label={photo ? `Change the photo (${photo.name})` : "Choose a photo"}>
+                {photo ? <img src={photo.url} alt="" /> : <><Camera size={26} aria-hidden="true" />Choose a photo</>}
+              </button>
+              <div className="stack">
+                <p className="small muted">A clear, front-facing photo of one person from the chest up, in good light. Upload one or pick it from your Library. It's free.</p>
+                {photo && <button type="button" className="btn sm" onClick={() => setPicking(true)} style={{ alignSelf: "flex-start" }}>Change photo</button>}
+                <label className="check">
+                  <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+                  <span>This is me, or I have the person's permission to make AI videos of them.</span>
+                </label>
+              </div>
             </div>
+          )}
+          {tip}
+          <div className="form-grid">
+            <label className="field">
+              <span>Name</span>
+              <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder="e.g. Maya" required />
+            </label>
+            <GenderSelect id="new-creator-gender" value={gender} onChange={setGender} />
+            <label className="field full">
+              <span>{mode === "describe" ? "Description" : "Description (optional)"} <span className="counter">{desc.length}/300</span></span>
+              <textarea className="textarea" rows={4} maxLength={300} value={description} onChange={(e) => setDescription(e.target.value)}
+                placeholder={mode === "describe" ? "Age, look, clothes and setting, e.g. Woman in her late 20s with curly dark hair and a denim jacket, filming in a bright kitchen" : "e.g. Our founder, friendly and direct"} />
+              {mode === "describe" && <span className="hint">At least 10 characters. The more specific, the better the portrait.</span>}
+            </label>
           </div>
-        )}
-        {tip}
-        <div className="form-grid">
-          <label className="field">
-            <span>Name</span>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder="e.g. Maya" required />
-          </label>
-          <GenderSelect id="new-creator-gender" value={gender} onChange={setGender} />
-          <label className="field full">
-            <span>{mode === "describe" ? "Description" : "Description (optional)"} <span className="counter">{desc.length}/300</span></span>
-            <textarea className="textarea" rows={4} maxLength={300} value={description} onChange={(e) => setDescription(e.target.value)}
-              placeholder={mode === "describe" ? "Age, look, clothes and setting, e.g. Woman in her late 20s with curly dark hair and a denim jacket, filming in a bright kitchen" : "e.g. Our founder, friendly and direct"} />
-            {mode === "describe" && <span className="hint">At least 10 characters. The more specific, the better the portrait.</span>}
-          </label>
-        </div>
-        {mode === "describe" && (
-          <>
-            <CreditBlockNotice block={block} />
-            <div className="cost"><Sparkles size={14} aria-hidden="true" />Costs <strong>{creditsLabel(IMAGE_CREDITS)}</strong> · {number(Math.max(0, user.limit - user.used))} left</div>
-          </>
-        )}
-        {problem && <div className="notice bad" role="alert">{problem}</div>}
-      </form>
+          {mode === "describe" && (
+            <>
+              <CreditBlockNotice block={block} />
+              <div className="cost"><Sparkles size={14} aria-hidden="true" />Costs <strong>{creditsLabel(IMAGE_CREDITS)}</strong> · {number(Math.max(0, user.limit - user.used))} left</div>
+            </>
+          )}
+          {problem && <div className="notice bad" role="alert">{problem}</div>}
+        </form>
       </div>
     </Modal>
   );

@@ -522,19 +522,18 @@ function ScheduleSteps({ post: initial, workspace, close, onScheduled, at, accou
             <legend><h3 ref={heading} tabIndex={-1}>When should it go out?</h3></legend>
             <label className={`sc-option${mode === "next" ? " on" : ""}${noRhythm ? " disabled" : ""}`}>
               <input type="radio" name="sc-when" checked={mode === "next"} disabled={noRhythm} onChange={() => setMode("next")} />
-              <span className="grow">
-                <strong>Next free slot</strong>
-                <span className="small muted">
-                  {noRhythm ? "Your posting schedule has no times yet. Add some on the Calendar page, or pick a time."
-                    : slotsQ.loading ? "Finding the next free slot…"
-                    : freeSlots[0] ? `${formatAt(freeSlots[0], tz)}, from your posting schedule`
-                    : "The first free time in your posting schedule."}
-                </span>
+              <strong>Next free slot</strong>
+              <span className="small muted">
+                {noRhythm ? "Your posting schedule has no times yet. Add some on the Calendar page, or pick a time."
+                  : slotsQ.loading ? "Finding the next free slot…"
+                  : freeSlots[0] ? `${formatAt(freeSlots[0], tz)}, from your posting schedule`
+                  : "The first free time in your posting schedule."}
               </span>
             </label>
             <label className={`sc-option${mode === "pick" ? " on" : ""}`}>
               <input type="radio" name="sc-when" checked={mode === "pick"} onChange={() => setMode("pick")} />
-              <span className="grow"><strong>Pick a date &amp; time</strong></span>
+              <strong>Pick a date &amp; time</strong>
+              <span className="small muted">Any time in the next 180 days.</span>
             </label>
             {mode === "pick" && (
               <div className="field sc-pick">

@@ -122,6 +122,8 @@ const views = {
   making: "p.render_status IN ('queued','running')",
   pending: "p.status='pending'",
   approved: "p.status='approved'",
+  /** Approved and ready, but not scheduled or published anywhere yet. */
+  unscheduled: "p.status='approved' AND p.render_status='ready' AND NOT EXISTS(SELECT 1 FROM publications x WHERE x.post_id=p.id AND x.status IN ('scheduled','publishing','published'))",
   rejected: "p.status='rejected'",
   failed: "p.render_status='failed'",
   all: "1=1",

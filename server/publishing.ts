@@ -62,8 +62,8 @@ async function insertPublications(env: Env, post: PostRow, accounts: AccountRow[
   const t = now();
   const created = accounts.map((a) => ({ id: uid(), account: a }));
   const statements = created.map(({ id, account }) =>
-    env.DB.prepare(`INSERT ${ignoreDuplicates ? "OR IGNORE " : ""}INTO publications(id,user_id,workspace_id,post_id,account_id,platform,scheduled_at,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'scheduled',?,?)`)
-      .bind(id, post.user_id, post.workspace_id, post.id, account.id, account.platform, at, t, t));
+    env.DB.prepare(`INSERT ${ignoreDuplicates ? "OR IGNORE " : ""}INTO publications(id,user_id,workspace_id,post_id,account_id,account_name,platform,scheduled_at,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'scheduled',?,?)`)
+      .bind(id, post.user_id, post.workspace_id, post.id, account.id, account.handle ? `${account.name} (@${account.handle})`.slice(0, 120) : account.name, account.platform, at, t, t));
   try {
     const results = await env.DB.batch(statements);
     return created.filter((_, i) => (results[i] as any)?.meta?.changes !== 0).map((c) => c.id);
@@ -75,7 +75,7 @@ async function insertPublications(env: Env, post: PostRow, accounts: AccountRow[
 }
 /** A publication with its account, as the browser sees it. */
 const SELECT_PUBLICATION =
-  "SELECT p.id,p.post_id AS postId,p.account_id AS accountId,p.platform,p.scheduled_at AS scheduledAt,p.status,p.attempts,p.url,p.external_id AS externalId,p.error,p.published_at AS publishedAt,a.name AS accountName,a.handle AS accountHandle FROM publications p JOIN social_accounts a ON a.id=p.account_id";
+  "SELECT p.id,p.post_id AS postId,p.account_id AS accountId,p.platform,p.scheduled_at AS scheduledAt,p.status,p.attempts,p.url,p.external_id AS externalId,p.error,p.published_at AS publishedAt,COALESCE(a.name,NULLIF(p.account_name,''),'Disconnected account') AS accountName,a.handle AS accountHandle FROM publications p LEFT JOIN social_accounts a ON a.id=p.account_id";
 
 publishing.post("/posts/:id/schedule", async (c) => {
   const user = c.get("user");

@@ -344,26 +344,32 @@ function uploadStatus(u: Upload) {
 }
 export function UploadList({ items, onDismiss, action }: { items: Upload[]; onDismiss?: (key: string) => void; action?: (item: Upload) => ReactNode }) {
   if (!items.length) return null;
+  // Announce how many are done rather than every progress step.
+  const working = items.filter((u) => u.status === "queued" || u.status === "uploading" || u.status === "checking").length;
+  const ready = items.filter((u) => u.status === "ready").length, failed = items.filter((u) => u.status === "failed").length;
   return (
-    <ul className="uploads list-plain" aria-label="Uploads" aria-live="polite">
-      {items.map((u) => {
-        const working = u.status === "queued" || u.status === "uploading" || (u.status === "checking" && !u.asset);
-        return (
-          <li key={u.key} className={`upload-row${u.status === "failed" ? " failed" : ""}`}>
-            {working ? <Spinner label="Uploading" /> : u.status === "failed" ? <AlertCircle size={20} color="var(--red)" aria-hidden="true" /> : u.status === "ready" ? <CheckCircle2 size={20} color="var(--green)" aria-hidden="true" /> : <Spinner label="Checking" />}
-            <div className="grow">
-              <div className="name">{u.name}</div>
-              <div className="status">{uploadStatus(u)}</div>
-              {u.status === "uploading" && <div className="meter" role="progressbar" aria-label={`Uploading ${u.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(u.progress * 100)}><span style={{ width: `${Math.max(3, u.progress * 100)}%` }} /></div>}
-            </div>
-            <div className="row">
-              {action?.(u)}
-              {onDismiss && !working && <button type="button" className="btn sm ghost" onClick={() => onDismiss(u.key)} aria-label={`Dismiss ${u.name}`}>Dismiss</button>}
-            </div>
-          </li>
-        );
-      })}
-    </ul>
+    <>
+      <p className="sr-only" aria-live="polite">{[working && `${working} uploading`, ready && `${ready} ready`, failed && `${failed} failed`].filter(Boolean).join(", ")}</p>
+      <ul className="uploads list-plain" aria-label="Uploads">
+        {items.map((u) => {
+          const working = u.status === "queued" || u.status === "uploading" || (u.status === "checking" && !u.asset);
+          return (
+            <li key={u.key} className={`upload-row${u.status === "failed" ? " failed" : ""}`}>
+              {working ? <Spinner label="Uploading" /> : u.status === "failed" ? <AlertCircle size={20} color="var(--red)" aria-hidden="true" /> : u.status === "ready" ? <CheckCircle2 size={20} color="var(--green)" aria-hidden="true" /> : <Spinner label="Checking" />}
+              <div className="grow">
+                <div className="name">{u.name}</div>
+                <div className="status">{uploadStatus(u)}</div>
+                {u.status === "uploading" && <div className="meter" role="progressbar" aria-label={`Uploading ${u.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(u.progress * 100)}><span style={{ width: `${Math.max(3, u.progress * 100)}%` }} /></div>}
+              </div>
+              <div className="row">
+                {action?.(u)}
+                {onDismiss && !working && <button type="button" className="btn sm ghost" onClick={() => onDismiss(u.key)} aria-label={`Dismiss ${u.name}`}>Dismiss</button>}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }
 

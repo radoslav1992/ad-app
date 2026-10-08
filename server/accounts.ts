@@ -145,12 +145,19 @@ accounts.get("/callback/:platform", async (c) => {
 accounts.delete("/:id", async (c) => {
   const user = c.get("user");
   const id = c.req.param("id");
-  const account = await c.env.DB.prepare("SELECT id FROM social_accounts WHERE id=? AND user_id=?").bind(id, user.id).first();
+  const account = await c.env.DB.prepare("SELECT id,workspace_id FROM social_accounts WHERE id=? AND user_id=?").bind(id, user.id).first<{ id: string; workspace_id: string }>();
   if (!account) throw new HTTPException(404, { message: "Social account not found." });
-  // Its publications go with it (scheduled ones are no longer published; the history of published ones is removed).
+  // Posts still scheduled to it are cancelled; published history stays (its account becomes "disconnected").
   // The account_busy trigger refuses while a post is being published to it.
+  const w = await c.env.DB.prepare("SELECT settings FROM workspaces WHERE id=?").bind(account.workspace_id).first<{ settings: string }>();
+  const settings = JSON.parse(w?.settings || "{}");
+  if (Array.isArray(settings?.schedule?.accounts)) settings.schedule.accounts = settings.schedule.accounts.filter((x: unknown) => x !== id);
   try {
-    await c.env.DB.prepare("DELETE FROM social_accounts WHERE id=? AND user_id=?").bind(id, user.id).run();
+    await c.env.DB.batch([
+      c.env.DB.prepare("UPDATE publications SET status='canceled',updated_at=? WHERE account_id=? AND status='scheduled'").bind(Math.floor(Date.now() / 1000), id),
+      c.env.DB.prepare("DELETE FROM social_accounts WHERE id=? AND user_id=?").bind(id, user.id),
+      c.env.DB.prepare("UPDATE workspaces SET settings=? WHERE id=?").bind(JSON.stringify(settings), account.workspace_id),
+    ]);
   } catch (e) {
     dbFailure(e);
   }

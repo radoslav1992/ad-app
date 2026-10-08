@@ -327,10 +327,16 @@ export function Landing() {
               Blitz shows your new posts one at a time, ready to watch. Keep the good ones, skip the rest, and fix anything in the editor before it goes out.
             </p>
             <ul className="checks on-dark">
-              <li><Check size={18} aria-hidden="true" /> Swipe right (or press <span className="kbd">→</span>) to approve, left (<span className="kbd">←</span>) to skip</li>
-              <li><Check size={18} aria-hidden="true" /> “Why this content?” explains the idea and the hook it is built on</li>
-              <li><Check size={18} aria-hidden="true" /> Approved posts can drop straight into the next free slot on your calendar</li>
-              <li><Check size={18} aria-hidden="true" /> Tap Edit to change the words, pictures or music before you approve</li>
+              <li>
+                <Check size={18} aria-hidden="true" />
+                <span>
+                  Swipe right (or press <kbd className="kbd">→</kbd>) to approve, left (
+                  <kbd className="kbd">←</kbd>) to skip
+                </span>
+              </li>
+              <li><Check size={18} aria-hidden="true" /><span>“Why this content?” explains the idea and the hook it is built on</span></li>
+              <li><Check size={18} aria-hidden="true" /><span>Approved posts can drop straight into the next free slot on your calendar</span></li>
+              <li><Check size={18} aria-hidden="true" /><span>Tap Edit to change the words, pictures or music before you approve</span></li>
             </ul>
           </div>
           <div className="visual blitz-visual" aria-hidden="true">

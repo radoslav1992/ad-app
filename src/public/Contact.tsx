@@ -72,7 +72,7 @@ export function Contact() {
         <p className="lead">Questions about {PRODUCT.name}, billing, partnerships or something that needs our attention — write to us and we'll reply by email.</p>
       </header>
       <div className="contact-grid">
-        <div className="frost">
+        <div className="frost contact-card">
           {sent ? (
             <div className="stack center" role="status" ref={done} tabIndex={-1}>
               <span className="icon-tile navy" style={{ margin: "0 auto" }}><CircleCheck size={24} aria-hidden="true" /></span>
@@ -112,7 +112,7 @@ export function Contact() {
                   onChange={(e) => setMessage(e.target.value)}
                   aria-describedby="message-count"
                 />
-                <span className="count" id="message-count">{message.length.toLocaleString("en-US")} / {MESSAGE_MAX.toLocaleString("en-US")} characters</span>
+                <small className="count" id="message-count">{message.length.toLocaleString("en-US")} / {MESSAGE_MAX.toLocaleString("en-US")} characters</small>
               </label>
               {topic === "abuse" && (
                 <p className="notice full">Please include links to the posts or accounts involved, and what is wrong with them.</p>
@@ -125,7 +125,7 @@ export function Contact() {
               <div className="full">
                 <FormError error={error} />
               </div>
-              <div className="full row wrap between">
+              <div className="full contact-submit">
                 <p className="small muted">
                   We use your details only to answer you. See our <Link className="text-link" to="/privacy">Privacy Policy</Link>.
                 </p>

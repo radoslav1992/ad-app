@@ -27,7 +27,7 @@ function PlanCard({ plan, signedIn }: { plan: Plan; signedIn: boolean }) {
       <p className="desc">{plan.description}</p>
       <ul className="checks">
         {plan.features.map((f) => (
-          <li key={f}><Check size={17} aria-hidden="true" /> {f}</li>
+          <li key={f}><Check size={17} aria-hidden="true" /><span>{f}</span></li>
         ))}
       </ul>
       <Link className={`btn block${free ? "" : " primary"}`} to={to}>{cta}</Link>
@@ -127,7 +127,7 @@ export function Pricing() {
           <div className="frost tight">
             <ul className="checks" style={{ fontSize: 16 }}>
               {planIncludes.map((item) => (
-                <li key={item}><Check size={18} aria-hidden="true" /> {item}</li>
+                <li key={item}><Check size={18} aria-hidden="true" /><span>{item}</span></li>
               ))}
             </ul>
           </div>
@@ -141,7 +141,7 @@ export function Pricing() {
             <h2 className="title" id="compare-title">Plans side by side</h2>
           </div>
           <div className="table-scroll">
-            <table className="pub-table">
+            <table className="pub-table compare">
               <thead>
                 <tr>
                   <td />

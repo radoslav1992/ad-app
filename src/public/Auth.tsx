@@ -99,7 +99,7 @@ function PasswordField({ label, value, onChange, autoComplete, hint, aside }: {
           {shown ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
         </button>
       </div>
-      {hint && <span className="hint" id={`${id}-hint`}>{hint}</span>}
+      {hint && <small className="hint" id={`${id}-hint`}>{hint}</small>}
     </div>
   );
 }
