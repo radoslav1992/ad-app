@@ -8,6 +8,8 @@ import { textAnimations, textPresets, type TextAnimation, type TextLook } from "
 import { captionPresets, captionStyles, type CaptionStyle } from "../shared/captions";
 import { voices } from "../shared/voices";
 import { emptyProfile, profileSchema, type Profile } from "../shared/profile";
+import { acceptShots, brollTarget, DEFAULT_BROLL_STYLE } from "../shared/broll";
+import { speechSeconds } from "../shared/credits";
 
 // Post ideas: a text model writes complete posts (hooks, slides, scripts, captions) for a brand from its profile,
 // choosing among the media the owner has (website images, uploads, the shared clip/music library, characters).
@@ -65,7 +67,7 @@ const conceptJson = {
       type: "array", maxItems: 12,
       items: {
         type: "object", additionalProperties: false,
-        required: ["format", "pattern", "topic", "why", "text", "slides", "background", "greenScreen", "hookClip", "demo", "demoText", "script", "character", "voice", "music", "caption", "hashtags", "title", "captionStyle", "animation"],
+        required: ["format", "pattern", "topic", "why", "text", "slides", "background", "greenScreen", "hookClip", "demo", "demoText", "script", "character", "voice", "music", "caption", "hashtags", "title", "captionStyle", "animation", "broll", "brollStyle"],
         properties: {
           format: { type: "string", enum: ["slideshow", "text", "hook_demo", "green_screen", "ugc"] },
           pattern: { type: "string" }, topic: { type: "string" }, why: { type: "string" }, text: { type: "string" },
@@ -74,6 +76,8 @@ const conceptJson = {
           script: { type: "string" }, character: { type: "string" }, voice: { type: "string" }, music: { type: "string" },
           caption: { type: "string" }, hashtags: { type: "array", maxItems: 8, items: { type: "string" } }, title: { type: "string" },
           captionStyle: { type: "string", enum: [...captionStyles] }, animation: { type: "string", enum: [...textAnimations] },
+          broll: { type: "array", maxItems: 3, items: { type: "object", additionalProperties: false, required: ["sentence", "shot"], properties: { sentence: { type: "string" }, shot: { type: "string" } } } },
+          brollStyle: { type: "string" },
         },
       },
     },
@@ -87,6 +91,9 @@ export type Concept = {
   captionStyle?: string;
   /** How the on-screen text enters. */
   animation?: string;
+  /** AI UGC only, when AI media is allowed: sentences of the script to show as AI images (B-roll), and their look. */
+  broll?: { sentence: string; shot: string }[];
+  brollStyle?: string;
 };
 export type IdeaRequest = {
   profile: Profile; plan: FormatId[]; mention: boolean; prompt?: string; style?: WritingStyle; pattern?: string;
@@ -138,6 +145,12 @@ export async function writeConcepts(env: Env, r: IdeaRequest): Promise<Concept[]
       ? `captionStyle: the look of spoken captions (ugc, and a demo's subtitles), one of: ${captionPresets.map((p) => `${p.id} (${p.description.toLowerCase()})`).join(", ")}.` +
         " Match the brand's tone (energetic: bold, karaoke, pop, bounce; calm or premium: classic, minimal, fade, luxe) and use a different one for each ugc post."
       : "captionStyle: 'bold' (not used by these formats).",
+    // Optional and cheap: a few AI images over a talking creator, only when the workspace spends AI credits.
+    ai && r.plan.includes("ugc")
+      ? "broll (ugc only, optional): 2–3 sentences of the script, copied exactly (never the first or the last), whose content can be shown as a concrete picture;" +
+        " each with `shot`: one realistic vertical photo of it in 10–25 English words (subject, action, setting; no text, logos, app screens or real people)." +
+        " brollStyle: one shared look for those shots in at most 15 English words, matching the brand's tone. Leave both empty for other formats or when nothing is worth showing."
+      : "broll: an empty array; brollStyle: empty.",
     "Avoid repeating the recent hooks.",
   ].filter(Boolean).join("\n");
   const input = {
@@ -272,7 +285,14 @@ export function conceptToSpec(k: Concept, format: FormatId, r: Pick<IdeaRequest,
     const script = clean(k.script, 900).replace(/\[[^\]]*\]|\([^)]*\)/g, "").replace(/[#*_~]/g, "").replace(/[ \t]{2,}/g, " ").trim();
     if (!character || script.length < 20) return null;
     const voice = voices.find((v) => v.id === k.voice) || voices.find((v) => v.gender === character.gender) || voices[0];
-    spec = { format, characterId: character.id, voiceId: voice.id, script, hook: clean(k.text, 140), hookLook: lookFor(format, k.animation), captionStyle: styleOf(k.captionStyle, "bold"), ...common };
+    // B-roll the writer planned: checked like a planned one (shared/broll.ts), AI images only (1 credit each).
+    const picked = ai && k.broll?.length
+      ? acceptShots({ style: k.brollStyle, shots: k.broll.map((b) => ({ sentence: b.sentence, description: b.shot })) }, script, Math.min(3, brollTarget(speechSeconds(script))))
+      : null;
+    const broll = picked?.shots.length
+      ? { enabled: true, style: picked.style || DEFAULT_BROLL_STYLE, shots: picked.shots.map((s) => ({ sentence: s.sentence, description: s.description, source: "image" as const })) }
+      : undefined;
+    spec = { format, characterId: character.id, voiceId: voice.id, script, hook: clean(k.text, 140), hookLook: lookFor(format, k.animation), captionStyle: styleOf(k.captionStyle, "bold"), ...(broll && { broll }), ...common };
   }
   const parsed = specSchema.safeParse(spec);
   return parsed.success ? parsed.data : null;

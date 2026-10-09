@@ -2,6 +2,7 @@ import { z } from "zod";
 import { captionStyles, type CaptionStyle } from "./captions";
 import { textLookSchema, defaultLook } from "./overlay";
 import { CLIP_CREDITS, IMAGE_CREDITS, avatarCredits, speechSeconds, talkingCredits, voiceCredits, type AvatarKind } from "./credits";
+import { brollAssets, brollLibrary, brollPending, brollSchema } from "./broll";
 
 // The post formats and the editable description ("spec") of a post. A spec references media by ID (the owner's
 // uploads and website images, the shared library, characters) or asks for AI media with a prompt. The server owns
@@ -136,6 +137,8 @@ export const ugcSpec = z.object({
   hookLook: textLookSchema.default({ ...defaultLook(), position: "top" }),
   captionStyle: z.enum(captionStyles).default("bold" satisfies CaptionStyle),
   music: musicSchema,
+  /** AI B-roll: shots cut in over chosen sentences while the voice goes on (shared/broll.ts). */
+  broll: brollSchema.optional(),
   generated: generatedVoice.optional(),
   ...common,
 });
@@ -207,6 +210,7 @@ export function pendingMedia(spec: Spec): { kind: "image" | "clip"; prompt: stri
     out.push({ kind: spec.background.clip ? "clip" : "image", prompt: spec.background.prompt, path: ["background"] });
   if (spec.format === "green_screen" && !spec.background.assetId && !spec.background.color && spec.background.prompt)
     out.push({ kind: "image", prompt: spec.background.prompt, path: ["background"] });
+  if (spec.format === "ugc") for (const m of brollPending(spec.broll, spec.script)) out.push({ kind: m.kind, prompt: m.prompt, path: ["broll", "shots", m.index] });
   return out;
 }
 /**
@@ -236,6 +240,7 @@ export function referencedAssets(spec: Spec): string[] {
   if (spec.format === "slideshow") ids.push(...spec.slides.map((s) => s.image.assetId));
   if (spec.format === "text" || spec.format === "green_screen") ids.push(spec.background.assetId);
   if (spec.format === "hook_demo") ids.push(spec.demo.assetId);
+  if (spec.format === "ugc") ids.push(...brollAssets(spec.broll));
   if (spec.music?.assetId) ids.push(spec.music.assetId);
   return [...new Set(ids.filter((x): x is string => !!x))];
 }
@@ -245,6 +250,7 @@ export function referencedLibrary(spec: Spec): string[] {
   if (spec.format === "text") ids.push(spec.background.libraryId);
   if (spec.format === "hook_demo" && "libraryId" in spec.hookClip) ids.push(spec.hookClip.libraryId);
   if (spec.format === "green_screen") ids.push(spec.clipId);
+  if (spec.format === "ugc") ids.push(...brollLibrary(spec.broll));
   return [...new Set(ids.filter((x): x is string => !!x))];
 }
 /** The hook shown in lists and on the swipe card. */

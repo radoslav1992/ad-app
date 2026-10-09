@@ -18,6 +18,7 @@ import { claimSpeech, mayHaveSpeech, SPEECH_PART_SECONDS, transcribe } from "./s
 import { SPEECH_MAX_SECONDS } from "../shared/speech";
 import { workspaceSettings } from "./workspaces";
 import { workspaceProfile } from "./ideas";
+import { withBrollVoice } from "./broll";
 import {
   pendingMedia, recordingCurrent, recordingKey, referencedAssets, referencedLibrary, specSchema, talking, type Spec,
 } from "../shared/formats";
@@ -201,7 +202,8 @@ async function makePost(e: Env, step: WorkflowStep, run: RunInfo, phase: Phase) 
   if (t && !recordingCurrent(first)) await makeRecording(e, step, run, t, workspace, phase);
   // The render.
   const { spec } = await step.do("spec-final", () => loadSpec(e, postId));
-  const ctx = await step.do("resolve", () => resolveContext(e, run.user_id, spec, workspace));
+  // With AI B-roll the voice is its own track under the cut-aways (server/broll.ts).
+  const ctx = await step.do("resolve", async () => withBrollVoice(e, run.user_id, spec, await resolveContext(e, run.user_id, spec, workspace)));
   const plan = planRender(spec, ctx);
   const outputs: Record<string, RenderStatus> = {};
   for (const job of ["compose", "stills"] as const) {
