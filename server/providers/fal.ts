@@ -2,9 +2,12 @@ import type { Env } from "../types";
 import { CLIP_SECONDS } from "../../shared/credits";
 import { failureCode, falQueueUrl, providerFetch, ProviderError } from "./http";
 
-// AI images (slides, backgrounds, character portraits) and short AI video clips through fal's queue API.
+// AI images (slides, backgrounds, character portraits, scenes) and short AI video clips through fal's queue API. A
+// clip is made from a description, or from a picture (a narrated video's scene) with the image-to-video model, in the
+// request shape rech-bg uses for "Раздвижи снимка" (server/generate-workflow.ts).
 const IMAGE_MODEL = "fal-ai/nano-banana-2";
 const CLIP_MODEL = "fal-ai/kling-video/v2.5-turbo/pro/text-to-video";
+const IMAGE_CLIP_MODEL = "fal-ai/kling-video/v2.5-turbo/pro/image-to-video";
 const NEGATIVE = "blur, distortion, low quality, text, captions, subtitles, watermark, logo";
 export type FalTicket = { request_id: string; status_url: string; response_url: string };
 
@@ -13,17 +16,21 @@ const auth = (e: Env) => {
   if (!key) throw new ProviderError("GENERATION_UNAVAILABLE");
   return { Authorization: `Key ${key}` };
 };
+/** How a clip is made: from `image` (a capability link to the picture it starts from) and `seconds` long (5 or 10). */
+export type ClipOptions = { image?: string; seconds?: number };
 /** The model and its input (pure, for tests). Pictures are portrait 9:16 for short-form; no text is drawn in them. */
-export function falRequest(kind: "image" | "clip", prompt: string) {
+export function falRequest(kind: "image" | "clip", prompt: string, options: ClipOptions = {}) {
   const text = `${prompt.trim()} No text, captions, logos or watermarks in the picture.`;
   if (kind === "image")
     return { model: IMAGE_MODEL, body: { prompt: text, num_images: 1, aspect_ratio: "9:16", resolution: "2K", output_format: "jpeg", limit_generations: true } };
-  // Clips are silent: the post's music and voice play over them.
-  return { model: CLIP_MODEL, body: { prompt: text, duration: String(CLIP_SECONDS), aspect_ratio: "9:16", negative_prompt: NEGATIVE, cfg_scale: 0.5 } };
+  // Clips are silent: the post's music and voice play over them. From a picture, the clip keeps its shape.
+  const common = { prompt: text, duration: String(options.seconds === 10 ? 10 : CLIP_SECONDS), negative_prompt: NEGATIVE, cfg_scale: 0.5 };
+  if (options.image) return { model: IMAGE_CLIP_MODEL, body: { ...common, image_url: options.image } };
+  return { model: CLIP_MODEL, body: { ...common, aspect_ratio: "9:16" } };
 }
 /** Submits once; the caller stores the ticket before anything else so a retry polls instead of paying again. */
-export async function submitFal(e: Env, kind: "image" | "clip", prompt: string): Promise<FalTicket> {
-  const { model, body } = falRequest(kind, prompt);
+export async function submitFal(e: Env, kind: "image" | "clip", prompt: string, options: ClipOptions = {}): Promise<FalTicket> {
+  const { model, body } = falRequest(kind, prompt, options);
   const r = await providerFetch(`https://queue.fal.run/${model}`, {
     method: "POST",
     headers: { ...auth(e), "Content-Type": "application/json" },

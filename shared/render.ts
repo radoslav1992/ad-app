@@ -1,4 +1,5 @@
 import type { Motion } from "./layers";
+import type { TransitionKind } from "./story";
 
 // The contract between the Worker and the private renderer container (renderer/server.py). The Worker turns a post
 // into one of these payloads (server/render-plan.ts); the renderer downloads every input from short-lived
@@ -39,6 +40,13 @@ export type ComposeSegment = {
    * around this path, on the segment's own clock, before it is fitted.
    */
   follow?: [number, number][] | null;
+  /**
+   * The way in from the segment before (not on the first): its first `duration` seconds (a whole number of frames)
+   * blend over the last ones before it, so the output is shorter by that overlap. Absent: a hard cut.
+   */
+  transition?: { kind: TransitionKind; duration: number } | null;
+  /** Video only: a clip shorter than the segment starts again from its beginning (else its last frame holds). */
+  loop?: boolean;
 };
 export type ComposePayload = {
   id: string;
@@ -46,7 +54,7 @@ export type ComposePayload = {
   urls: string[];
   width: number;
   height: number;
-  /** 1–20 segments joined with hard cuts. */
+  /** 1–40 segments joined with hard cuts or their transitions. */
   segments: ComposeSegment[];
   /** A separate speech track placed at `start` seconds on the output clock. */
   voice?: { input: number; start: number; volume: number } | null;

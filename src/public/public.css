@@ -153,7 +153,7 @@
 @media (max-width: 900px) { .pub-steps { grid-template-columns: 1fr; } }
 
 /* Formats */
-.formats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; list-style: none; margin: 0; padding: 0; }
+.formats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; list-style: none; margin: 0; padding: 0; }
 .format-card { display: flex; flex-direction: column; gap: 12px; padding: 14px 14px 20px; }
 .format-card h3 { font-family: var(--display); font-size: 19px; letter-spacing: -0.01em; color: #fff; }
 .format-card .short { color: #d9f59a; font-weight: 600; font-size: 13px; }
@@ -191,6 +191,15 @@
 .fmt-ugc .cap { position: absolute; bottom: 18%; left: 8px; right: 8px; font-size: 16px; font-weight: 800; text-shadow: 0 2px 0 #000, 0 -1px 0 #000, 2px 0 0 #000, -2px 0 0 #000; }
 .fmt-ugc .cap em { font-style: normal; color: #c8f560; }
 /* A wide recording with the vertical crop that follows the speaker. */
+/* Narrated video: a pastel doodle (a round character, three hearts) under Title Case subtitles with a lime key word. */
+.fmt-story { background: #e9f4ff; }
+.fmt-story .sketch { position: absolute; inset: 0; }
+.fmt-story .sketch i { position: absolute; border: 3px solid #15171d; }
+.fmt-story .sketch i:nth-child(1) { width: 34%; aspect-ratio: 1; left: 33%; top: 24%; border-radius: 50%; background: #ffb38a; }
+.fmt-story .sketch i:nth-child(2) { width: 14%; aspect-ratio: 1; left: 20%; top: 10%; border-radius: 50% 50% 8% 50%; transform: rotate(45deg); background: #ff8fa3; }
+.fmt-story .sketch i:nth-child(3) { width: 14%; aspect-ratio: 1; right: 20%; top: 10%; border-radius: 50% 50% 8% 50%; transform: rotate(45deg); background: #ff8fa3; }
+.fmt-story .cap { position: absolute; bottom: 16%; left: 8px; right: 8px; font-size: 15px; font-weight: 800; line-height: 1.15; text-shadow: 0 2px 0 #000, 0 -1px 0 #000, 2px 0 0 #000, -2px 0 0 #000; }
+.fmt-story .cap em { font-style: normal; color: #b8f53a; }
 .fmt-clip { background: linear-gradient(160deg, #1b2433, #0b0e15); }
 .fmt-clip .wide { position: absolute; inset: 22% -30% 22% -30%; border-radius: 8px; background: linear-gradient(90deg, #2a3446, #3b2d4f 55%, #253244); }
 .fmt-clip .person { position: absolute; bottom: 0; left: 50%; transform: translateX(-50%); width: 30%; aspect-ratio: 1 / 1.05; }

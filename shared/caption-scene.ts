@@ -1,4 +1,4 @@
-import { captionGroups, captionPresets, readableOn, type CaptionDocument, type CaptionStyle, type CaptionWord } from "./captions";
+import { captionGroups, captionPresets, keyWordIndex, readableOn, titleCase, type CaptionDocument, type CaptionStyle, type CaptionWord } from "./captions";
 import { BASELINE, textWidth, type CaptionFont } from "./caption-fonts";
 import { anchor, LAYER_MARGIN, type TextLayer } from "./layers";
 
@@ -38,7 +38,7 @@ export type CaptionInterval = { start: number; end: number; items: CaptionItem[]
 
 const DARK = "#121612", SHADOW = "#000000";
 const fontOf = (style: CaptionStyle): CaptionFont => style === "luxe" ? "serif" : "sans";
-const sizeFactor = (style: CaptionStyle) => style === "minimal" ? .045 : style === "pop" || style === "impact" ? .09 : style === "luxe" ? .07 : .065;
+const sizeFactor = (style: CaptionStyle) => style === "minimal" ? .045 : style === "pop" || style === "impact" ? .09 : style === "luxe" ? .07 : style === "keyword" ? .078 : .065;
 /** Vertical centre of the caption block: top, middle or the lower part of the frame. */
 export const captionCenter = (position: CaptionDocument["position"], height: number) =>
   height * (position === "top" ? .2 : position === "middle" ? .5 : .79);
@@ -50,7 +50,7 @@ export type CaptionLayout = {
 /** Wraps into at most two lines inside the frame, shrinking the text when needed (the same as the preview always did). */
 export function layoutCaption(words: CaptionWord[], document: CaptionDocument, width: number, height: number): CaptionLayout {
   const style = document.style, font = fontOf(style);
-  const texts = words.map((w) => document.uppercase ? w.text.toLocaleUpperCase("en") : w.text);
+  const texts = words.map((w) => document.uppercase ? w.text.toLocaleUpperCase("en") : style === "keyword" ? titleCase(w.text) : w.text);
   const maxWidth = width * (style === "bubble" || style === "tiles" ? .78 : .84);
   let size = Math.round(Math.min(width, height) * sizeFactor(style) * (document.size || 1));
   let lines: number[][] = [];
@@ -103,7 +103,9 @@ function groupItems(group: CaptionWord[], document: CaptionDocument, width: numb
   const active = (w: CaptionWord) => mid >= w.start && mid < w.end;
   const shown = style === "pop" || style === "impact" ? group.filter(active) : style === "typewriter" ? group.filter((w) => mid >= w.start) : group;
   if (!shown.length) return [];
+  // "keyword" reveals the words as they are said, each in its final place (the whole group is laid out at once).
   const layout = layoutCaption(shown, document, width, height), s = layout.size;
+  const key = style === "keyword" ? keyWordIndex(group) : -1;
   const items: CaptionItem[] = [];
   const text = (o: Omit<CaptionText, "kind" | "font" | "size"> & { size?: number }): CaptionText => ({ kind: "text", font, size: s, ...o });
   const lines = layout.lines;
@@ -126,7 +128,7 @@ function groupItems(group: CaptionWord[], document: CaptionDocument, width: numb
 
   for (const line of lines) for (const placed of line.words) {
     const { word } = placed, selected = active(word), cx = placed.x + placed.width / 2, y = line.y, w = placed.width;
-    if (style === "fade" && mid < word.start) continue;
+    if ((style === "fade" || style === "keyword") && mid < word.start) continue;
     let fill = textColor;
     if (selected && ["karaoke", "pop", "neon", "bounce", "wave", "luxe", "fade"].includes(style)) fill = accent;
     // Motion of this word while the interval lasts.
@@ -138,6 +140,7 @@ function groupItems(group: CaptionWord[], document: CaptionDocument, width: numb
     }
     if (style === "wave") anim = grid(from, to).map((t) => ({ t, dy: Math.sin(t * 5 - placed.n * .9) * s * .09 }));
     if (style === "fade") anim = [{ t: word.start, alpha: 0, dy: s * .3 }, { t: word.start + .25, alpha: 1, dy: 0 }];
+    if (style === "keyword") anim = [{ t: word.start, scale: .7 }, { t: word.start + .08, scale: 1.08 }, { t: word.start + .16, scale: 1 }];
     if (style === "impact") rotate = -.06;
     if (style === "sticker" && selected) { rotate = -.07; anim = [{ t: from, scale: 1.06 }]; }
     const at = { x: cx, y, rotate, anim };
@@ -169,6 +172,10 @@ function groupItems(group: CaptionWord[], document: CaptionDocument, width: numb
       const offset = s * (selected ? .1 : .07);
       items.push(text({ layer: 1, ...at, x: cx + offset, y: y + offset, text: placed.text, fill: selected ? DARK : accent }));
       items.push(text({ layer: 2, ...at, text: placed.text, fill: selected ? accent : textColor, border: { color: DARK, width: s * .03 } }));
+    } else if (style === "keyword") {
+      // White Title Case with a thick black outline and a soft shadow; the group's key word in the accent colour.
+      items.push(text({ layer: 1, ...at, y: y + s * .05, text: placed.text, fill: SHADOW, fillAlpha: .5, border: { color: SHADOW, width: s * .13, alpha: .5 }, blur: s * .08 }));
+      items.push(text({ layer: 2, ...at, text: placed.text, fill: placed.n === key ? accent : textColor, border: { color: "#000000", width: s * .12 } }));
     } else if (style === "classic" || style === "typewriter") {
       items.push(text({ layer: 2, ...at, text: placed.text, fill: textColor }));
     } else {

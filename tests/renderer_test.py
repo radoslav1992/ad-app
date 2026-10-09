@@ -425,7 +425,7 @@ class ValidationTest(RendererTest):
             self.segment(duration=10 ** 400), self.segment(motion='spin'), self.segment(fit='stretch'), self.segment(kind='gif'),
             self.base(segments=[]), self.base(segments=[{'kind': 'color', 'color': '#00000', 'duration': 1}]),
             self.base(segments=[{'kind': 'color', 'color': '#000000\n', 'duration': 1}]),
-            self.base(segments=[{'kind': 'image', 'duration': 1, 'input': 0}] * 21),
+            self.base(segments=[{'kind': 'image', 'duration': 1, 'input': 0}] * (server.MAX_SEGMENTS + 1)),
             self.base(voice={'input': 0, 'start': 0, 'volume': "1':eval=frame[x]"}),
             self.base(voice={'input': 0, 'start': -1, 'volume': 1}), self.base(voice={'input': 0, 'volume': 1}),
             self.base(music={'input': 0, 'volume': 1.5, 'duck': []}),
@@ -809,5 +809,128 @@ class TrackTest(RendererTest):
         # The whole operation: no face anywhere, so the crop stays centred.
         job = run({'operation': 'track', 'url': FIXTURES.url('cut.mp4'), 'start': 1, 'length': 3.5})
         self.assertEqual((job['status'], job['track'], job['duration']), ('completed', {'v': 1, 'points': []}, 3.5), job)
+
+
+class TransitionTest(RendererTest):
+    """Transitions between segments (a narrated video, shared/story.ts): each blends over the frames around a scene
+    boundary, the output is shorter by every overlap, and the voice plays on its own clock underneath."""
+    @classmethod
+    def setUpClass(cls):
+        for name, c in (('t-red.png', 'red'), ('t-blue.png', 'blue'), ('t-green.png', 'green')):
+            make(name, '-f','lavfi','-i',f'color=c={c}:s=360x640','-frames:v','1')
+        make('tone4.wav', '-f','lavfi','-i','sine=frequency=330:duration=4')
+        # One second: red, then green from 0.5 s (to tell a loop from a held last frame).
+        make('halves.mp4', '-f','lavfi','-i','color=c=red:s=360x640:r=30:d=0.5','-f','lavfi','-i','color=c=green:s=360x640:r=30:d=0.5',
+             '-filter_complex','[0][1]concat=n=2:v=1:a=0','-c:v','libx264','-threads','1','-pix_fmt','yuv420p')
+
+    def scenes(self, kinds, *, frames=(51, 60, 39), voice=True):
+        """Three pictures on a 4 s clock with boundaries at 1.5 s and 3.0 s: each segment holds its scene plus half of
+        each transition next to it (frames), as the Worker plans them."""
+        urls = [FIXTURES.url(n) for n in ('t-red.png', 't-blue.png', 't-green.png', 'tone4.wav')]
+        segments = [{'kind': 'image', 'input': i, 'duration': f / 30, 'motion': m} for i, (f, m) in enumerate(zip(frames, ('zoom-in', None, 'pan-left')))]
+        for s, (kind, seconds) in zip(segments[1:], kinds):
+            if kind: s['transition'] = {'kind': kind, 'duration': seconds}
+        return {'operation': 'compose', 'urls': urls, 'width': 720, 'height': 1280, 'synthetic': False, 'ass': '', 'segments': segments,
+                'voice': {'input': 3, 'start': 0, 'volume': 1} if voice else None}
+
+    def test_transitions_are_centred_on_the_boundaries_and_the_length_is_the_voice(self):
+        job = run(self.scenes([('fade', 0.4), ('slideleft', 0.6)]))
+        self.assertEqual(job['status'], 'completed', job)
+        self.assertEqual(job['duration'], 4.0)
+        mp4 = job['outputs'][0]
+        info = ffprobe(mp4, '-count_frames')
+        video = next(s for s in info['streams'] if s['codec_type'] == 'video')
+        audio = next(s for s in info['streams'] if s['codec_type'] == 'audio')
+        self.assertEqual(video['nb_read_frames'], '120')
+        self.assertAlmostEqual(float(audio['duration']), 4.0, delta=0.03)
+        # Red, then a fade centred on 1.5 s (half red, half blue), blue, the slide centred on 3.0 s (blue leaving to the
+        # left, green coming in from the right), green.
+        self.assertTrue(near(pixel(mp4, 1.0, 360, 640), (255, 0, 0)))
+        self.assertTrue(near(pixel(mp4, 1.5, 360, 640), (128, 0, 128), 25), pixel(mp4, 1.5, 360, 640))
+        self.assertTrue(near(pixel(mp4, 2.2, 360, 640), (0, 0, 255)))
+        self.assertTrue(near(pixel(mp4, 3.0, 100, 640), (0, 0, 255)) and near(pixel(mp4, 3.0, 620, 640), (0, 128, 0)))
+        self.assertTrue(near(pixel(mp4, 3.6, 360, 640), (0, 128, 0)))
+        # Before and after each transition the pictures are whole.
+        self.assertTrue(near(pixel(mp4, 1.25, 360, 640), (255, 0, 0)) and near(pixel(mp4, 1.75, 360, 640), (0, 0, 255)))
+        self.assertTrue(near(pixel(mp4, 2.65, 620, 640), (0, 0, 255)) and near(pixel(mp4, 3.35, 100, 640), (0, 128, 0)))
+        # The voice is one continuous track: as loud at the boundaries as between them.
+        middle = loudness(mp4, 0.6, 0.2)
+        self.assertGreater(middle, -25)
+        for t in (1.4, 2.9, 3.6): self.assertAlmostEqual(loudness(mp4, t, 0.2), middle, delta=1.0)
+
+    def test_every_transition_kind_renders_between_its_pictures(self):
+        for kind in server.TRANSITIONS:
+            with self.subTest(kind=kind):
+                # Two scenes of 1 s with a 0.4 s transition: 0.2 s of overlap on each side, 2 s in all.
+                payload = self.scenes([(kind, 0.4)], frames=(36, 36, 30), voice=False)
+                job = run({**payload, 'segments': payload['segments'][:2]})
+                self.assertEqual((job['status'], job.get('duration')), ('completed', 2.4 - 0.4), job)
+                mp4 = job['outputs'][0]
+                self.assertEqual(next(s for s in ffprobe(mp4, '-count_frames')['streams'] if s['codec_type'] == 'video')['nb_read_frames'], '60')
+                self.assertTrue(near(pixel(mp4, 0.5, 360, 640), (255, 0, 0)) and near(pixel(mp4, 1.5, 360, 640), (0, 0, 255)))
+                # During the transition (0.8–1.2 s) a frame is neither picture alone (some blend early, some late).
+                def pure(t, colour):
+                    pixels = frame(mp4, t, 0, 0, 720, 1280)[::997]
+                    return sum(near(p, colour, 40) for p in pixels) / len(pixels) > 0.95
+                self.assertTrue(any(not pure(t, (255, 0, 0)) and not pure(t, (0, 0, 255)) for t in (0.9, 1.0, 1.1)), kind)
+
+    def test_a_hard_cut_mixes_with_transitions_and_segment_sound_crossfades(self):
+        # A cut (no transition) between the first two; the clip's own sound fades into the silent picture.
+        urls = [FIXTURES.url(n) for n in ('t-red.png', 'clip.mp4', 't-green.png')]
+        job = run({'operation': 'compose', 'urls': urls, 'width': 720, 'height': 1280, 'synthetic': False, 'ass': '', 'segments': [
+            {'kind': 'image', 'input': 0, 'duration': 1.0},
+            {'kind': 'video', 'input': 1, 'duration': 1.2, 'audio': 1},
+            {'kind': 'image', 'input': 2, 'duration': 1.0, 'transition': {'kind': 'fadeblack', 'duration': 0.4}}]})
+        self.assertEqual((job['status'], job.get('duration')), ('completed', 2.8), job)
+        mp4 = job['outputs'][0]
+        info = ffprobe(mp4, '-count_frames')
+        self.assertEqual(next(s for s in info['streams'] if s['codec_type'] == 'video')['nb_read_frames'], '84')
+        self.assertAlmostEqual(float(next(s for s in info['streams'] if s['codec_type'] == 'audio')['duration']), 2.8, delta=0.03)
+        self.assertTrue(near(pixel(mp4, 0.9, 360, 640), (255, 0, 0)) and near(pixel(mp4, 1.1, 360, 640), (255, 0, 0)))
+        self.assertLess(max(pixel(mp4, 2.0, 360, 640)), 60, 'through black')
+        self.assertLess(loudness(mp4, 0.1, 0.8), -80)
+        self.assertGreater(loudness(mp4, 1.2, 0.5), -35)
+        self.assertLess(loudness(mp4, 2.4, 0.3), -80)
+
+    def test_a_looped_clip_starts_again_instead_of_holding_its_last_frame(self):
+        clip = FIXTURES.url('halves.mp4')
+        for loop, colour in ((True, (255, 0, 0)), (False, (0, 128, 0))):
+            job = run({'operation': 'compose', 'urls': [clip], 'width': 720, 'height': 1280, 'synthetic': False, 'ass': '',
+                       'segments': [{'kind': 'video', 'input': 0, 'duration': 2.0, 'loop': loop}]})
+            self.assertEqual((job['status'], job.get('duration')), ('completed', 2.0), job)
+            self.assertTrue(near(pixel(job['outputs'][0], 1.2, 360, 640), colour), (loop, pixel(job['outputs'][0], 1.2, 360, 640)))
+
+    def test_payloads_without_transitions_join_exactly_as_before(self):
+        calls = []
+        real = server.command
+        def spy(args, timeout=90):
+            calls.append(args)
+            return real(args, timeout)
+        payload = self.scenes([(None, 0), (None, 0)], frames=(30, 30, 30))
+        with patch.object(server, 'command', spy):
+            job = run(payload)
+        self.assertEqual((job['status'], job['duration']), ('completed', 3.0), job)
+        render = next(args for args in calls if '-filter_complex' in args)
+        graph = render[render.index('-filter_complex') + 1]
+        self.assertIn('[v0][a0][v1][a1][v2][a2]concat=n=3:v=1:a=1[vcat][acat]', graph)
+        self.assertNotIn('xfade', graph)
+        self.assertNotIn('settb=1/30,setpts=N[w', graph)
+
+    def test_invalid_transitions_fail_before_any_download(self):
+        good = self.scenes([('fade', 0.4), ('zoomin', 0.6)])
+        def change(i, **fields):
+            p = json.loads(json.dumps(good))
+            p['segments'][i].update(fields)
+            return p
+        self.assert_fails(change(0, transition={'kind': 'fade', 'duration': 0.4}), 'MEDIA_INVALID')
+        self.assert_fails(change(1, transition={'kind': 'spin', 'duration': 0.4}), 'MEDIA_INVALID')
+        self.assert_fails(change(1, transition={'kind': 'fade', 'duration': 2.5}), 'MEDIA_INVALID')
+        self.assert_fails(change(1, transition={'kind': 'fade', 'duration': 'x'}), 'MEDIA_INVALID')
+        self.assert_fails(change(1, transition='fade'), 'MEDIA_INVALID')
+        # The way in and the way out of the middle segment (1.0 + 0.6 s) are longer than it is (1.5 s).
+        self.assert_fails(change(1, duration=1.5, transition={'kind': 'fade', 'duration': 1.0}), 'MEDIA_INVALID')
+        self.assert_fails(change(1, loop='yes'), 'MEDIA_INVALID')
+        clip = {'kind': 'video', 'input': 0, 'duration': 1, 'loop': True, 'keep': [[0, 1]]}
+        self.assert_fails({**good, 'segments': [clip]}, 'MEDIA_INVALID')
 
 if __name__ == '__main__': unittest.main()

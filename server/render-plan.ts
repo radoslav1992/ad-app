@@ -4,6 +4,7 @@ import { overlayItems, revealSeconds, type TextLook } from "../shared/overlay";
 import { motionFor } from "../shared/layers";
 import { clipWords } from "../shared/speech";
 import { cutawaySegments, placeShots } from "../shared/broll";
+import { FPS, storySegments, storyTiming, type StoryScene } from "../shared/story";
 import { cutWords, keptDuration, windowCuts, type KeepRange } from "../shared/cuts";
 import { trackWindow } from "../shared/track";
 import { FRAME, type ComposePayload, type ComposeSegment, type StillsPayload } from "../shared/render";
@@ -22,6 +23,8 @@ export type PlanContext = {
   media: Record<string, Media>;
   /** The talking recording's video (and word timings) for UGC and talking hooks; `voice`: its sound on its own (B-roll). */
   avatar?: { key: string; duration: number; words: { text: string; start: number; end: number }[]; voice?: string };
+  /** A narrated video's voiceover (the AI voice or the owner's recording) and its words on its clock. */
+  narration?: { key: string; duration: number; words: CaptionWord[] };
   accent: string;
   watermark: string;
 };
@@ -113,7 +116,22 @@ function music(ctx: PlanContext, inputs: Inputs, spec: Spec, duck: [number, numb
   const m = need(ctx, id);
   return { input: inputs.add(m.key), volume: spec.music!.volume, duck };
 }
-const total = (segments: ComposeSegment[]) => round(segments.reduce((n, s) => n + s.duration, 0));
+/** The output's length: the segments less the overlaps of their transitions. */
+const total = (segments: ComposeSegment[]) => round(segments.reduce((n, s) => n + s.duration - (s.transition?.duration ?? 0), 0));
+/**
+ * A scene's picture for `seconds` (its segment, transitions included): its AI clip, or its AI picture moving slowly,
+ * or the owner's image or video, or a library clip. A clip shorter than its scene loops, except AI clips (made for the
+ * scene, they hold their last frame for the moment of a transition).
+ */
+function sceneSegment(ctx: PlanContext, inputs: Inputs, scene: StoryScene, seconds: number, n: number): ComposeSegment {
+  const id = scene.source === "clip" ? scene.clipId || scene.imageId : scene.source === "image" ? scene.imageId : scene.source === "own" ? scene.assetId : scene.libraryId;
+  // The exact frame count (frames / FPS): the renderer snaps it back to the same frames.
+  const m = need(ctx, id), duration = seconds;
+  if (m.kind === "image") return { kind: "image", input: inputs.add(m.key), duration, motion: motionFor(n) };
+  if (m.kind !== "video") throw new Error("MEDIA_INPUT");
+  const loop = scene.source !== "clip" && m.duration > 0.5 && m.duration < seconds - 1;
+  return { kind: "video", input: inputs.add(m.key), trim: 0, duration, audio: 0, ...(loop && { loop }) };
+}
 
 export function planRender(spec: Spec, ctx: PlanContext): Plan {
   const inputs = new Inputs();
@@ -224,6 +242,28 @@ export function planRender(spec: Spec, ctx: PlanContext): Plan {
       duck = [[0, d]];
       synthetic = true;
       coverAt = coverMoment(Math.min(1.2, d / 2), spec.hook, spec.hookLook, 0, Math.min(3, d));
+      break;
+    }
+    case "story": {
+      // A narrated video: a picture per scene on the voiceover's clock, a transition centred on every scene edge (the
+      // segments overlap by them, so they add up to the voice exactly), the voice as one track, subtitles over it all.
+      const narration = ctx.narration;
+      if (!narration) throw new Error("MEDIA_INPUT");
+      if (narration.duration > MAX_SECONDS + 0.5) throw new Error("MEDIA_TOO_LONG");
+      const timing = storyTiming(spec.scenes, narration.words, Math.min(MAX_SECONDS, narration.duration));
+      segments = storySegments(timing, spec.scenes.map((s) => s.transition)).map((part) => {
+        const segment = sceneSegment(ctx, inputs, spec.scenes[part.scene], part.frames / FPS, part.scene);
+        return part.transition ? { ...segment, transition: { kind: part.transition.kind, duration: part.transition.frames / FPS } } : segment;
+      });
+      voice = { input: inputs.add(narration.key), start: 0, volume: 1 };
+      // Subtitles only from real word timings (never from estimates).
+      if (spec.captions.enabled && narration.words.length) ass = captionAss(styledCaptions(timing.words, spec.captions.style));
+      const d = timing.frames / FPS;
+      duck = [[0, d]];
+      synthetic = spec.narration.kind === "voice";
+      // The cover: the first picture once the first words are on screen.
+      const first = timing.words[Math.min(timing.words.length - 1, 3)];
+      coverAt = Math.max(0.3, Math.min((first?.end ?? 1) + 0.1, timing.scenes[0].end - 0.2));
       break;
     }
   }

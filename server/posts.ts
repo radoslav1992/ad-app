@@ -11,6 +11,7 @@ import { isVoice } from "./voices";
 import {
   referencedAssets, referencedLibrary, specCredits, specHook, specSchema, talking, visualPart, type Spec,
 } from "../shared/formats";
+import { storyScript, STORY_MAX_CHARS, STORY_MAX_SECONDS } from "../shared/story";
 import type { AvatarKind } from "../shared/credits";
 
 // Posts: made from a spec by a run (AI media, voice, avatar video, render), then reviewed in Blitz.
@@ -43,6 +44,17 @@ export async function checkReferences(env: Env, userId: string, spec: Spec) {
   if (t) {
     if (!isVoice(t.voiceId)) throw new HTTPException(400, { message: "Choose a voice." });
     await characterKind(env, userId, spec);
+  }
+  // A narrated video: an AI voice reads at most STORY_MAX_CHARS; an own voiceover is a recording with sound, up to the
+  // render's three minutes.
+  if (spec.format === "story" && spec.narration.kind === "voice") {
+    if (!isVoice(spec.narration.voiceId)) throw new HTTPException(400, { message: "Choose a voice." });
+    if (storyScript(spec.scenes).length > STORY_MAX_CHARS) throw new HTTPException(400, { message: `The script can be up to ${STORY_MAX_CHARS.toLocaleString("en-US")} characters (about ${Math.round(STORY_MAX_CHARS / 15)} seconds).` });
+  }
+  if (spec.format === "story" && spec.narration.kind === "upload") {
+    const a = await env.DB.prepare("SELECT mime,duration,meta FROM media_assets WHERE id=? AND user_id=?").bind(spec.narration.assetId, userId).first<{ mime: string; duration: number; meta: string }>();
+    if (!a || !/^(audio|video)\//.test(a.mime) || a.meta.includes('"hasAudio":false')) throw new HTTPException(400, { message: "Choose your voiceover: one of your audio or video files with sound." });
+    if (a.duration > STORY_MAX_SECONDS + 0.5) throw new HTTPException(400, { message: "A narrated video can be up to 3 minutes long. Choose a shorter recording." });
   }
 }
 /** Starts the run's background work; a failed start is retried by maintenance (the run stays queued). */

@@ -138,6 +138,12 @@ function FormatArt({ id }: { id: PostFormatId }) {
           <span className="cap">this <em>changed</em> how I</span>
         </>
       )}
+      {id === "story" && (
+        <>
+          <div className="sketch"><i /><i /><i /></div>
+          <span className="cap">Octopuses Have Three <em>Hearts</em></span>
+        </>
+      )}
       {id === "clip" && (
         <>
           <div className="wide"><div className="person" /></div>
@@ -154,7 +160,7 @@ function FormatCards() {
   if (!list)
     return (
       <ul className="formats" aria-busy="true">
-        {[0, 1, 2, 3, 4, 5].map((i) => (
+        {[0, 1, 2, 3, 4, 5, 6].map((i) => (
           <li key={i} className="glass format-card skeleton" aria-hidden="true">
             <div className="fmt-art" />
             <div><span className="bar short-bar" /><span className="bar" /></div>
@@ -194,7 +200,7 @@ const faqs: { q: string; a: ReactNode }[] = [
     a: (
       <p>
         {PRODUCT.name} turns your website into a steady stream of short-form posts. It learns your product and audience, writes post ideas, and renders them
-        as slideshows, text videos, hook-and-demo videos, green screen memes and AI creator videos. You approve the ones you like and they publish on your
+        as slideshows, text videos, hook-and-demo videos, green screen memes, AI creator videos and narrated videos. You approve the ones you like and they publish on your
         schedule.
       </p>
     ),
@@ -258,7 +264,7 @@ const faqs: { q: string; a: ReactNode }[] = [
           captions never costs credits.
         </p>
         <p>
-          AI credits pay for the AI extras: AI images, AI video backgrounds, AI voices and talking AI creators. The <Link to="/pricing">pricing page</Link> lists
+          AI credits pay for the AI extras: AI images, AI video clips, AI voices and talking AI creators. The <Link to="/pricing">pricing page</Link> lists
           what each one costs.
         </p>
       </>
@@ -317,7 +323,7 @@ export function Landing() {
       <section className="pub-section" id="features" aria-labelledby="formats-title" tabIndex={-1}>
         <div className="pub-wrap">
           <div className="pub-section-head center">
-            <span className="kicker">Six formats</span>
+            <span className="kicker">Seven formats</span>
             <h2 className="title" id="formats-title">The formats that work on short-form, made for you</h2>
             <p className="sub">Mix them freely. Each post comes with its caption, hashtags and title for every network.</p>
           </div>

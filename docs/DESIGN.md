@@ -57,12 +57,12 @@ opens Blitz and starts the first batch of posts as soon as the brand analysis is
   The reference's "Remixed From" panel shows the viral video a post copies; ours shows **Built on**: the proven hook
   pattern (no third-party videos or view counts).
 - **Create** (manual creation, from the owner's demo video): format tabs (Slideshow, Wall of Text, Video Hook & Demo,
-  Green Screen Meme, AI UGC); left panel with Mode (Create new / Remix), "Mention your business?", media pickers
+  Green Screen Meme, AI UGC, Narrated Video, Clip); left panel with Mode (Create new / Remix), "Mention your business?", media pickers
   (video, audio, creator), style and prompt, **Generate**; right panel with Proven formats / Preview and an
   inspector for the text (preset, weight, size, colour, stroke, box, position, animation), swaps, slides and audio;
   **Save & build**. The preview plays the post's text animation and captions on a canvas, in sync with the video when
   there is a recorded voice or a demo with speech (Hook / Demo switch for hook & demo posts).
-  Under the preview: **Captions** for AI UGC, a grid of the twenty caption styles, each a looping live sample; and
+  Under the preview: **Captions** for AI UGC, a grid of the twenty-one caption styles, each a looping live sample; and
   **Subtitles** for a demo (or a wall of text's own clip with its sound kept) with speech: a switch and the same
   grid, or "Find speech" for an upload not yet listened to. Animation choices are small live tiles too. Every grid
   is a radio group (arrow keys move the choice); the chosen tile turns ink with a lime underline. With reduced motion
@@ -73,6 +73,20 @@ opens Blitz and starts the first batch of posts as soon as the brand analysis is
   *Add B-roll* spends credits (a saved post is saved and made again at once). Once added: a switch to show it, the
   shots with their state (made, made when you save, not shown and why) and *Edit shots*. A strip under the preview
   marks the cut-aways on the video's clock, and the preview plays the shots at those times.
+- **Narrated Video** tab of Create (after the owner's faceless science Short: a voiceover, a hand-drawn doodle per
+  sentence, big Title Case subtitles with one lime key word). Left: *Voiceover* — AI voice (voice, length: 20 s to
+  2 min 40 s) or *My recording* (an audio or video file; its words are found for free, and "Match to the script" times a
+  pasted exact script); *Picture style*, seven radio tiles, each a small drawn sample of the same scene (Doodle,
+  Watercolor, 3D clay, Comic, Flat vector, Cinematic photo, Anime); *Main character*; the topic; **Write script** or
+  **Make scenes**. Right: the phone preview (play/pause; the voice is the clock; pictures move, transitions and
+  subtitles play at the render's times) beside the selected scene (its words as chips: mark a key word, split before a
+  word, merge with the next; the picture source — AI image, AI clip with its length, my media, library clip — with the
+  price of each; what the picture shows; "New picture"; the transition in). Below: the **timeline** (rech-bg's studio
+  timeline): ruler and playhead, the scenes with their stills and draggable edges that snap to the pauses between
+  words (arrow keys move an edge a word), each transition's overlap drawn across its edge, the subtitle groups with the
+  key word in bold, the voice and the music; zoom buttons. Then **Subtitles** (switch and the style grid; "Key word" by
+  default) and **Plan and price**: voice, AI pictures, AI clips, own media, the total and the credits left; the main
+  button reads **Make video · N credits** and is the only thing that spends.
 - **Clip** tab of Create: edits a clip post (or a moment opened from the Clips page): the moment (start, length),
   Remove pauses, Follow the speaker, the on-screen title and the caption style. The preview plays the kept parts and,
   once the speaker was found, slides the wide picture as the render crops it.

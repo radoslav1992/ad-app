@@ -114,7 +114,7 @@ export function drawCaptions(ctx: CanvasRenderingContext2D, width: number, heigh
 /** Whether the person asked for less motion: previews then show a still moment instead of looping. */
 export const reducedMotion = () => typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
-// One animation frame loop for every live preview on the page (the caption style grid has twenty).
+// One animation frame loop for every live preview on the page (the caption style grid has twenty-one).
 const painters = new Set<(now: number) => void>();
 let frame = 0;
 function tick(now: number) {

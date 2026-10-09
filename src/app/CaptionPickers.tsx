@@ -3,7 +3,7 @@ import { captionPresets, demoWords, type CaptionDocument, type CaptionStyle } fr
 import { overlayItems, textAnimationInfo, textAnimations, type TextAnimation, type TextLook } from "../../shared/overlay";
 import { drawCaptions, drawItems, fitCanvas, loadCaptionFonts, onFrame, reducedMotion } from "./caption-canvas";
 
-// Pickers with live samples: the twenty caption styles (spoken captions of AI UGC, subtitles of uploads) and the
+// Pickers with live samples: the caption styles (spoken captions of AI UGC, subtitles of uploads and voiceovers) and the
 // entrance animations of on-screen text. Each sample is drawn by the same code as the preview and the render.
 
 /** A small canvas that redraws `draw(ctx, t)` on a `period`-second loop while it is on screen (still with reduced motion). */
@@ -43,7 +43,7 @@ function LoopCanvas({ width, height, period, stillAt, draw }: {
 }
 
 /** Radio-group keys: arrows move (and choose), Home/End jump; the chosen option is the one tab stop. */
-function useRadioKeys<T>(options: readonly T[], value: T, onChange: (v: T) => void) {
+export function useRadioKeys<T>(options: readonly T[], value: T, onChange: (v: T) => void) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const onKey = (e: ReactKeyboardEvent, i: number) => {
     const n = options.length;
@@ -72,7 +72,7 @@ function StyleSample({ style }: { style: CaptionStyle }) {
   return <LoopCanvas width={SAMPLE_W} height={SAMPLE_H} period={3.4} stillAt={0.85} draw={(ctx, t) => drawCaptions(ctx, SAMPLE_W, SAMPLE_H, t, document)} />;
 }
 
-/** The twenty caption styles, each a live sample with its name and what it does. */
+/** The caption styles, each a live sample with its name and what it does. */
 export function CaptionStylePicker({ value, onChange, label = "Caption style" }: { value: CaptionStyle; onChange: (style: CaptionStyle) => void; label?: string }) {
   const ids = useMemo(() => captionPresets.map((p) => p.id), []);
   const radio = useRadioKeys(ids, value, onChange);

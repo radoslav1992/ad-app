@@ -25,8 +25,8 @@ MAX_VIDEO_PIXELS = 9_000_000        # pixels of one input video frame
 MAX_LENGTH = 600                    # seconds of an upload checked by 'inspect' unless the Worker allows more
 LONG_LENGTH = 7200                  # seconds of the longest input (a long video on a paid plan)
 MAX_OUTPUT = 180                    # seconds of a composed video
-MAX_URLS = 32
-MAX_SEGMENTS = 20
+MAX_URLS = 48                       # a narrated video: a picture per scene, the voice and the music
+MAX_SEGMENTS = 40
 MAX_SLIDES = 10
 MAX_DUCK_RANGES = 500
 FPS = 30
@@ -38,6 +38,9 @@ DOWNLOAD_DEADLINE = 1200
 FADE_IN, FADE_OUT = 1.0, 1.5        # music fades (seconds)
 DUCK, DUCK_RAMP = 0.7, 0.3          # music is lowered by 70% under speech, with 0.3 s ramps
 MAX_KEEP = 300                      # parts kept of one video segment (instant cuts, shared/cuts.ts)
+# Transitions between segments (FFmpeg xfade, in FFmpeg since 4.3; zoomin since 5.0), as shared/story.ts lists them.
+TRANSITIONS = ('fade', 'fadeblack', 'dissolve', 'slideleft', 'slideup', 'wipeleft', 'smoothleft', 'circleopen', 'zoomin')
+MAX_TRANSITION = 2.0                # seconds
 # "Follow the speaker" (operation 'track', ported from rech-bg): faces found with OpenCV's YuNet detector (MIT,
 # opencv_zoo; the Dockerfile downloads and checks it) become the crop path of shared/track.ts.
 YUNET_MODEL = os.environ.get('YUNET_MODEL', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models', 'face_detection_yunet_2023mar.onnx'))
@@ -376,17 +379,29 @@ def segment_plan(s, count, width, height):
     if motion is not None and motion not in MOTIONS: raise ValueError('Invalid motion')
     trim = number(s['trim'], 0, LONG_LENGTH) if s.get('trim') is not None else 0.0
     audio = number(s['audio'], 0, 1) if s.get('audio') is not None else 0.0
+    transition = transition_plan(s.get('transition'))
+    loop = s.get('loop') if s.get('loop') is not None else False
+    if not isinstance(loop, bool): raise ValueError('Invalid loop')
     kind = s.get('kind')
-    if kind == 'color': return {'kind': kind, 'color': color(s.get('color')), 'frames': frames}
+    if kind == 'color': return {'kind': kind, 'color': color(s.get('color')), 'frames': frames, 'transition': transition}
     if kind not in ('image', 'video'): raise ValueError('Invalid segment kind')
     video = kind == 'video'
     keep = keep_ranges(s['keep'], frames) if video and s.get('keep') is not None else None
+    if loop and keep: raise ValueError('Invalid loop: with cuts')
     # The crop filter is built (and so the path checked) now; the path is on the segment's own clock.
     follow = follow_crop(s['follow'], width, height) if video and s.get('follow') is not None else None
     # Fields that do not apply to the kind are checked above but ignored.
     return {'kind': kind, 'input': index(s.get('input'), count), 'frames': frames, 'fit': mode,
             'motion': motion if kind == 'image' else None, 'trim': trim if video else 0.0,
-            'audio': audio if video else 0.0, 'keep': keep, 'follow': follow}
+            'audio': audio if video else 0.0, 'keep': keep, 'follow': follow, 'transition': transition,
+            'loop': loop and video}
+
+def transition_plan(t):
+    """A segment's transition in: its first frames blend over the last ones of what comes before (xfade), for a whole
+    number of frames. None (the default) is a hard cut."""
+    if t is None: return None
+    if not isinstance(t, dict) or t.get('kind') not in TRANSITIONS: raise ValueError('Invalid transition')
+    return {'kind': t['kind'], 'frames': int(round(number(t.get('duration'), 2 / FPS, MAX_TRANSITION) * FPS))}
 
 def compose_plan(payload, origin):
     """Validates a compose payload completely, before anything is downloaded."""
@@ -395,7 +410,13 @@ def compose_plan(payload, origin):
     segments = payload['segments']
     if not isinstance(segments, list) or not 1 <= len(segments) <= MAX_SEGMENTS: raise ValueError('Invalid segments')
     segments = [segment_plan(s, len(urls), width, height) for s in segments]
-    frames = sum(s['frames'] for s in segments)
+    if segments[0]['transition']: raise ValueError('Invalid transition: nothing before the first segment')
+    # A transition overlaps the segments on both sides of it: each segment holds its way in and its way out.
+    for i, s in enumerate(segments):
+        out = segments[i + 1]['transition'] if i + 1 < len(segments) else None
+        if (s['transition']['frames'] if s['transition'] else 0) + (out['frames'] if out else 0) > s['frames']:
+            raise ValueError('Invalid transition: longer than its segments')
+    frames = sum(s['frames'] - (s['transition']['frames'] if s['transition'] else 0) for s in segments)
     if frames > MAX_OUTPUT * FPS: raise ValueError('Video too long')
     voice, music = payload.get('voice'), payload.get('music')
     if voice is not None:
@@ -454,9 +475,9 @@ def checked(build, *args):
     except (KeyError, TypeError, AttributeError, IndexError): raise ValueError('Invalid payload')
 
 def compose(job, payload, origin):
-    """Segments joined with hard cuts, an optional green-screen clip keyed over them, captions burned over everything;
-    the segments' own sound (or silence), the overlay's sound, a voice track and looped, faded and ducked music mixed.
-    Output 0: MP4; output 1 (with coverAt): a JPEG of it."""
+    """Segments joined with hard cuts or transitions, an optional green-screen clip keyed over them, captions burned
+    over everything; the segments' own sound (or silence), the overlay's sound, a voice track and looped, faded and
+    ducked music mixed. Output 0: MP4; output 1 (with coverAt): a JPEG of it."""
     plan = checked(compose_plan, payload, origin)
     width, height, total_frames = plan['width'], plan['height'], plan['frames']
     total, total_samples = total_frames / FPS, total_frames * SAMPLES_PER_FRAME
@@ -467,7 +488,12 @@ def compose(job, payload, origin):
         inputs.append(['-threads', '1', *args])
         return len(inputs) - 1
     blur = (width // 4, height // 4)
-    for i, s in enumerate(plan['segments']):
+    segments = plan['segments']
+    blended = any(s['transition'] for s in segments)
+    # With transitions and no segment sound (a narrated video: the voice is its own track) one silence covers it all.
+    sounding = [s['kind'] == 'video' and s['audio'] > 0 and media[s['input']]['hasAudio'] for s in segments]
+    own_sound = not blended or any(sounding)
+    for i, s in enumerate(segments):
         n, has_sound = s['frames'], False
         length = n / FPS
         if s['kind'] == 'color':
@@ -493,7 +519,8 @@ def compose(job, payload, origin):
             seek = ['-ss', f'{s["trim"]:.3f}'] if s['trim'] else []
             # With cuts, the segment reads its window up to the end of the last kept part.
             window = s['keep'][-1][1] if s['keep'] else length
-            k = add_input(*seek, '-t', f'{window + 0.5:.3f}', '-i', files[s['input']])
+            # A looped clip starts again from its beginning instead of holding its last frame.
+            k = add_input(*(['-stream_loop', '-1'] if s['loop'] else []), *seek, '-t', f'{window + 0.5:.3f}', '-i', files[s['input']])
             graph.append(f'[{k}:v:0]setpts=PTS-STARTPTS,fps={FPS}[p{i}]')
             picture, cut = f'[p{i}]', ''
             if s['follow']:
@@ -510,16 +537,19 @@ def compose(job, payload, origin):
             # A source shorter than the segment holds its last frame.
             graph.append(f'{picture}format=yuv420p,tpad=stop_mode=clone:stop_duration={length:.3f},trim=end_frame={n},'
                          f'setpts=N/{FPS}/TB[v{i}]')
-            if s['audio'] > 0 and source['hasAudio']:
+            if sounding[i]:
                 # Sound is cut in 160-sample blocks (1/300 s at 48 kHz): ten per video frame.
                 select = f",asetnsamples=n=160:p=0,aselect='{cut}',asetpts=N/SR/TB" if cut else ''
                 graph.append(f'[{k}:a:0]aresample={RATE}:async=1:first_pts=0{select},aformat=sample_rates={RATE}:channel_layouts=stereo,'
                              f'volume={s["audio"]:.4f},apad,atrim=end_sample={n * SAMPLES_PER_FRAME}[a{i}]')
                 has_sound = True
-        if not has_sound:
+        if not has_sound and own_sound:
             graph.append(f'anullsrc=r={RATE}:cl=stereo,atrim=end_sample={n * SAMPLES_PER_FRAME}[a{i}]')
         pairs += f'[v{i}][a{i}]'
-    graph.append(f'{pairs}concat=n={len(plan["segments"])}:v=1:a=1[vcat][acat]')
+    if not blended:
+        graph.append(f'{pairs}concat=n={len(segments)}:v=1:a=1[vcat][acat]')
+    else:
+        join_with_transitions(graph, segments, own_sound, total_samples)
     video, sounds = '[vcat]', ['[acat]']
     overlay = plan['overlay']
     if overlay:
@@ -581,6 +611,34 @@ def compose(job, payload, origin):
         if plan['synthetic']: mark_jpeg(cover)
         outputs.append(cover)
     job.update(status='completed', duration=round(total, 3), files=len(outputs), outputs=outputs)
+
+def join_with_transitions(graph, segments, own_sound, total_samples):
+    """Joins the segments' pictures ([v0]...) into [vcat] and their sound ([a0]...) into [acat]. A segment with a
+    transition starts while the one before ends: xfade blends their overlapping frames from `offset`, the output frame
+    where the overlap begins, so the result is shorter by every overlap. The sound crossfades over the same samples;
+    without own sound the result is one silence of the video's length."""
+    video, at = '[v0]', segments[0]['frames']
+    sound = '[a0]'
+    for i in range(1, len(segments)):
+        s, t = segments[i], segments[i]['transition']
+        # Every picture on one time base (1/FPS), as xfade needs; pts count frames from each segment's start.
+        graph.append(f'[v{i}]settb=1/{FPS},setpts=N[w{i}]')
+        if i == 1: graph.append(f'{video}settb=1/{FPS},setpts=N[w0]'); video = '[w0]'
+        last = '[vcat]' if i == len(segments) - 1 else f'[x{i}]'
+        if t:
+            offset = at - t['frames']
+            graph.append(f'{video}[w{i}]xfade=transition={t["kind"]}:duration={t["frames"] / FPS:.6f}:offset={offset / FPS:.6f}{last}')
+            at = offset + s['frames']
+        else:
+            graph.append(f'{video}[w{i}]concat=n=2:v=1:a=0,settb=1/{FPS},setpts=N{last}')
+            at += s['frames']
+        video = last
+        if own_sound:
+            mixed = '[acat]' if i == len(segments) - 1 else f'[y{i}]'
+            graph.append(f'{sound}[a{i}]acrossfade=ns={t["frames"] * SAMPLES_PER_FRAME}:c1=tri:c2=tri{mixed}' if t
+                         else f'{sound}[a{i}]concat=n=2:v=0:a=1{mixed}')
+            sound = mixed
+    if not own_sound: graph.append(f'anullsrc=r={RATE}:cl=stereo,atrim=end_sample={total_samples}[acat]')
 
 def stills(job, payload, origin):
     """One JPEG per slide: the picture cover-cropped to the frame (or a solid colour), its ASS burned in."""

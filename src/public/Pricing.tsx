@@ -62,7 +62,7 @@ const questions: { q: string; a: ReactNode }[] = [
     q: "What are AI credits for?",
     a: (
       <p>
-        The AI extras: AI images, AI video backgrounds, AI voices and talking AI creators. The table above shows what each costs. Automations only spend
+        The AI extras: AI images, AI video clips, AI voices and talking AI creators. The table above shows what each costs. Automations only spend
         credits if you allow them to.
       </p>
     ),

@@ -44,7 +44,9 @@ export function postText(post: PostRow, platform: PlatformId, link?: string | nu
 /** Realistic AI media (a talking AI creator, AI images, clips or voices): disclosed where the network asks. */
 export function synthetic(post: PostRow) {
   const spec = json<any>(post.spec, {});
-  return post.format === "ugc" || !!spec.generated || !!spec.hookClip?.characterId || /"prompt"\s*:\s*"/.test(post.spec || "");
+  // A narrated video: an AI voice, or AI pictures or clips in its scenes.
+  const story = post.format === "story" && (spec.narration?.kind === "voice" || (spec.scenes || []).some((s: any) => s?.source === "image" || s?.source === "clip"));
+  return post.format === "ugc" || story || !!spec.generated || !!spec.hookClip?.characterId || /"prompt"\s*:\s*"/.test(post.spec || "");
 }
 
 const span = (s: number) => (s % 60 === 0 ? `${s / 60} minute${s === 60 ? "" : "s"}` : `${s} seconds`);

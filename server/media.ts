@@ -60,7 +60,7 @@ media.get("/", async (c) => {
     limit: z.coerce.number().int().min(1).max(200).default(100),
   }).parse(c.req.query());
   const where = ["user_id=?"], args: unknown[] = [user.id];
-  // Lists never carry transcripts (a long video's can be a megabyte): only one file's view does (GET /:id).
+  // Lists never carry transcripts or alignments (a long video's can be a megabyte): only one file's view does (GET /:id).
   if (q.workspace) { where.push("(workspace_id=? OR workspace_id IS NULL)"); args.push(q.workspace); }
   if (q.type) { where.push("mime LIKE ?"); args.push(`${q.type}/%`); }
   // The library is what people can reuse: uploads, website images and stand-alone AI images; generated post files
@@ -69,7 +69,7 @@ media.get("/", async (c) => {
   if (q.source === "generated") where.push("post_id IS NOT NULL");
   where.push("status<>'uploading'");
   const rows = (await c.env.DB.prepare(
-    `SELECT id,kind,name,mime,bytes,duration,width,height,status,workspace_id,created_at,json_remove(meta,'$.transcript') AS meta FROM media_assets WHERE ${where.join(" AND ")} ORDER BY created_at DESC LIMIT ?`,
+    `SELECT id,kind,name,mime,bytes,duration,width,height,status,workspace_id,created_at,json_remove(meta,'$.transcript','$.alignment') AS meta FROM media_assets WHERE ${where.join(" AND ")} ORDER BY created_at DESC LIMIT ?`,
   ).bind(...args, q.limit).all<any>()).results;
   const usage = await c.env.DB.prepare("SELECT COALESCE(SUM(bytes),0) AS used,(SELECT max_bytes FROM media_limits WHERE user_id=?) AS max FROM media_assets WHERE user_id=?")
     .bind(user.id, user.id).first<{ used: number; max: number | null }>();

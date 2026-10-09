@@ -106,11 +106,23 @@ export function listening(meta: Record<string, unknown>, extra: Record<string, u
  * minutes) is used up.
  */
 export async function claimSpeech(env: Env, userId: string, meta: Record<string, unknown>, seconds: number) {
+  return (await spendSpeech(env, userId, seconds)) ? listening(meta) : null;
+}
+/**
+ * Takes one file of `seconds` from the person's free daily allowance (transcriptions and forced alignments share it);
+ * false when it is used up. `giveBack` returns it when the work could not be done.
+ */
+export async function spendSpeech(env: Env, userId: string, seconds: number, giveBack = false) {
   const minutes = Math.max(1, Math.ceil(seconds / 60));
-  if (!(await take(env, "speech-minutes", DAY, userId, minutes, SPEECH_MINUTES_PER_DAY))) return null;
+  if (giveBack) {
+    await take(env, "speech-minutes", DAY, userId, -minutes, SPEECH_MINUTES_PER_DAY);
+    await take(env, "speech-files", DAY, userId, -1, SPEECH_FILES_PER_DAY);
+    return true;
+  }
+  if (!(await take(env, "speech-minutes", DAY, userId, minutes, SPEECH_MINUTES_PER_DAY))) return false;
   if (!(await take(env, "speech-files", DAY, userId, 1, SPEECH_FILES_PER_DAY))) {
     await take(env, "speech-minutes", DAY, userId, -minutes, SPEECH_MINUTES_PER_DAY);
-    return null;
+    return false;
   }
-  return listening(meta);
+  return true;
 }

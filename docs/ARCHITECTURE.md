@@ -38,8 +38,10 @@ in `shared/` (formats/specs, plans and credits, captions and on-screen text layo
 3. **Make.** **ContentGeneration** (`server/content-workflow.ts`) works through these stages:
    - **AI images and clips (fal):** the generated asset IDs are written back into the spec.
    - **Talking creator:** an ElevenLabs voice with timings, then a HeyGen video lip-synced to that voice.
+   - **Narrated video:** its AI voice (after its pictures and clips, so a refused picture stops the run first).
    - **Render:** `server/render-plan.ts` turns the spec into a renderer payload of segments, music with ducking, an
-     optional green-screen overlay, and ASS captions/text from `shared/overlay.ts` + `shared/caption-scene.ts`. The
+     optional green-screen overlay, transitions between segments (narrated videos), and ASS captions/text from
+     `shared/overlay.ts` + `shared/caption-scene.ts`. The
      container renders the MP4 and a cover; slideshows also get JPEG slides.
    - **Save:** files from earlier versions of the post are deleted.
 4. **Review.** Blitz lists ready, pending posts. Approving can auto-schedule (`autoSchedule` in
@@ -51,7 +53,7 @@ keyframes on the caption items, from each block's start; libass gets them as `\m
 draws the same items on a canvas (`src/app/caption-canvas.ts`, ported from rech-bg) with the same fonts. All but the
 word-by-word reveal are over within 0.6 s; that one is paced to the text and done by 40% of the block. Stills are
 drawn without animation and the cover is taken once the first text is fully shown. AI UGC captions use one of the
-twenty caption styles (`captionStyle`); the writer picks one per post and never repeats one within a batch.
+twenty-one caption styles (`captionStyle`); the writer picks one per post and never repeats one within a batch.
 
 **AI B-roll** (AI UGC; `shared/broll.ts`, `server/broll.ts`, ported from rech-bg's "B-roll с AI"). `POST /api/broll/plan`
 is free (the text model only, 30 an hour): the model gets the script's sentences as data (never the first or the last,
@@ -65,6 +67,40 @@ made ones stay referenced, so switching B-roll off or on re-renders without char
 render cuts the silent creator video (resumed at its own time after each shot) with the shots and plays the recorded
 voice WAV as the separate `voice` track throughout. The writer may add 2–3 AI image shots to new AI UGC posts when the
 workspace spends AI credits.
+
+**Narrated videos** (format `story`; `shared/story.ts`, `server/story.ts`, the writer and scene split ported from
+rech-bg's studio: `server/studio-writer.ts`, `server/studio-speech.ts`). A voiceover with a picture for every sentence;
+the whole plan lives in the post's spec (no migration: `posts.format` allows `story` since 0005):
+- **The voice.** Either an AI voice reading the scenes' words (ElevenLabs with timestamps of the text as written; when
+  the timings are missing or do not match the script word for word, ElevenLabs **forced alignment** of the recorded WAV
+  with the script, `POST /v1/forced-alignment`, multipart `file` + `text`, as rech-bg's fallback; a failure never costs
+  the paid voice), or the owner's recording (audio or video, up to 3 minutes): timed by its transcript (Scribe, free up
+  to 10 minutes) or, when they paste its exact script, by forced alignment (`POST /api/story/timing`: free within the
+  daily speech allowance, made once per file and script and kept in `media_assets.meta.alignment`, never in lists).
+- **Scenes** hold their words, never times: `storyTiming` maps them onto the voice's words (by position, or by their
+  letters when the voice reads a word differently) and starts each scene in the middle of the pause before its first
+  word, on the 1/30 s frame grid, at least half a second long. Moving an edge, splitting or merging only moves words
+  between scenes, so the script and its paid recording stay the same (`narrationKey`: voice + length + fingerprint).
+  `splitScenes` lays timed words out as scenes of one or two sentences of about 2–8 s (a long sentence is split at a
+  comma or its longest pause), at most 40. The writer (`writeStory`) writes 20 s to 2 min 40 s scripts as scenes with a
+  picture, key words and one recurring subject; `POST /api/story/plan` describes pictures for scenes that already have
+  their words (free; the text model only).
+- **Pictures** share one style (seven prompt suffixes) and one subject sentence: an AI image (`fal-ai/nano-banana-2`,
+  1 credit) shown with the renderer's slow zoom or pan, an AI clip made from that picture (Kling image-to-video,
+  `fal-ai/kling-video/v2.5-turbo/pro/image-to-video` with `image_url` = the picture's capability link, rech-bg's request
+  shape; 6 credits per 5 s, 5 or 10 s, plus the picture), the owner's image or video, or a library clip (free; a
+  shorter clip loops). Pending media lists pictures first and then the clips `from` them; each is a paid generation of
+  the post's run (claim before call, refunded with the run). A new picture for one scene charges only that scene.
+- **Transitions** are FFmpeg `xfade` in `compose` (fade, fadeblack, dissolve, slideleft, slideup, wipeleft,
+  smoothleft, circleopen, zoomin; "auto" is a calm varied sequence without zoomin or dissolve). Each is an even
+  number of frames, centred on its scene edge: segment k lasts its scene plus half of each transition next to it, and
+  the renderer overlaps T frames at offset (edge − T/2), so the segments less their overlaps are exactly the voice's
+  length. The voice is one `voice` track from 0 (as B-roll), never cut. A payload without transitions is joined with
+  `concat` exactly as before; with them, segment sound (if any) crossfades over the same samples (`acrossfade`). The
+  preview plays the same segments with CSS approximations of each transition at the same frames.
+- **Subtitles**: the caption engine over the whole voice; the "keyword" style shows Title Case words as they are said,
+  white with a thick black outline, one key word per caption group in lime (the scene's `keys`, chosen by the writer
+  or the owner, else the longest word that is not a little one). No subtitles without real word timings.
 
 **Speech in uploads** (ported from rech-bg). An uploaded video or track is transcribed by ElevenLabs Scribe v2
 (`server/speech.ts`: `POST /v1/speech-to-text`, `model_id=scribe_v2`, `timestamps_granularity=word`, no

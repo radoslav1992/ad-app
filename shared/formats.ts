@@ -1,8 +1,11 @@
 import { z } from "zod";
 import { captionStyles, type CaptionStyle } from "./captions";
 import { textLookSchema, defaultLook } from "./overlay";
-import { CLIP_CREDITS, IMAGE_CREDITS, avatarCredits, speechSeconds, talkingCredits, voiceCredits, type AvatarKind } from "./credits";
+import { CLIP_CREDITS, CLIP_SECONDS, IMAGE_CREDITS, avatarCredits, speechSeconds, talkingCredits, voiceCredits, type AvatarKind } from "./credits";
 import { brollAssets, brollLibrary, brollPending, brollSchema } from "./broll";
+import {
+  clipPrompt, narrationKey, narrationSchema, scenePrompt, storySceneSchema, storyScript, storyStyleIds, STORY_MAX_CHARS, STORY_MAX_SCENES, type StoryStyle,
+} from "./story";
 import { trackSchema } from "./track";
 import { LONG_VIDEO_SECONDS } from "./speech";
 
@@ -11,7 +14,7 @@ import { LONG_VIDEO_SECONDS } from "./speech";
 // everything under `generated` (voices, avatar videos, word timings): an edit from the browser never sets it.
 
 /** The formats the writer makes (Blitz batches, automations, manual drafts). */
-export const formatIds = ["slideshow", "text", "hook_demo", "green_screen", "ugc"] as const;
+export const formatIds = ["slideshow", "text", "hook_demo", "green_screen", "ugc", "story"] as const;
 export type FormatId = (typeof formatIds)[number];
 /** Every post format: the written ones, and clips cut from a long video (the Clips page, server/shorts.ts). */
 export const postFormatIds = [...formatIds, "clip"] as const;
@@ -45,6 +48,12 @@ export const formats: Record<PostFormatId, { name: string; short: string; descri
     name: "AI UGC",
     short: "Talking creator",
     description: "An AI creator talks about your product straight to camera, with word-by-word captions.",
+    ai: true,
+  },
+  story: {
+    name: "Narrated Video",
+    short: "Voiceover with pictures",
+    description: "An AI voiceover or your own, with a new picture for every sentence in one style, smooth transitions and big word-by-word subtitles.",
     ai: true,
   },
   clip: {
@@ -218,7 +227,24 @@ export const clipSpec = z.object({
   tracked: z.object({ key: z.string().max(200), track: trackSchema }).optional(),
   ...common,
 });
-export const specSchema = z.discriminatedUnion("format", [slideshowSpec, textSpec, hookDemoSpec, greenScreenSpec, ugcSpec, clipSpec]);
+/**
+ * A narrated video (shared/story.ts): the voiceover, its scenes (words, picture, transition) in one picture style with
+ * one recurring subject, and subtitles over the whole voice. `generated` is the AI voice once recorded.
+ */
+export const storySpec = z.object({
+  format: z.literal("story"),
+  narration: narrationSchema,
+  scenes: z.array(storySceneSchema).min(1).max(STORY_MAX_SCENES)
+    .refine((scenes) => storyScript(scenes).length <= STORY_MAX_CHARS * 2, "The script is too long for one video."),
+  style: z.enum(storyStyleIds as [StoryStyle, ...StoryStyle[]]).default("doodle"),
+  /** One description of the recurring subject or character, repeated in every scene's picture prompt. */
+  subject: z.string().trim().max(300).default(""),
+  captions: z.object({ enabled: z.boolean().default(true), style: z.enum(captionStyles).default("keyword" satisfies CaptionStyle) }).default({ enabled: true, style: "keyword" }),
+  music: musicSchema,
+  generated: generatedVoice.optional(),
+  ...common,
+});
+export const specSchema = z.discriminatedUnion("format", [slideshowSpec, textSpec, hookDemoSpec, greenScreenSpec, ugcSpec, storySpec, clipSpec]);
 export type Spec = z.infer<typeof specSchema>;
 export type SlideshowSpec = z.infer<typeof slideshowSpec>;
 export type TextSpec = z.infer<typeof textSpec>;
@@ -226,6 +252,11 @@ export type UgcSpec = z.infer<typeof ugcSpec>;
 export type HookDemoSpec = z.infer<typeof hookDemoSpec>;
 export type GreenScreenSpec = z.infer<typeof greenScreenSpec>;
 export type ClipSpec = z.infer<typeof clipSpec>;
+export type StorySpec = z.infer<typeof storySpec>;
+/** The AI voice of a narrated video is recorded for its current words and voice (no new recording is paid). */
+export function narrationCurrent(spec: StorySpec) {
+  return spec.narration.kind === "voice" && !!spec.generated?.voiceAssetId && spec.generated.key === narrationKey(spec.narration.voiceId, storyScript(spec.scenes));
+}
 /** The moment a clip's speaker path was measured for: a new moment needs a new measurement. */
 export const trackKey = (spec: ClipSpec) => `${spec.source.assetId}:${spec.source.start}:${spec.source.end}`;
 
@@ -248,9 +279,14 @@ export function recordingCurrent(spec: Spec) {
   return spec.generated.key === recordingKey(t.characterId, t.voiceId, t.text);
 }
 
+/**
+ * An AI image or clip to make: its asset goes to `key` (default "assetId") of the object at `path`. A clip `from` an
+ * image is made from the asset in that field of the same object (made earlier in the same run); `seconds`: its length.
+ */
+export type PendingMedia = { kind: "image" | "clip"; prompt: string; path: (string | number)[]; key?: string; from?: string; seconds?: 5 | 10 };
 /** Every AI image or clip the spec still asks for (a prompt without its asset), with where it goes. */
-export function pendingMedia(spec: Spec): { kind: "image" | "clip"; prompt: string; path: (string | number)[] }[] {
-  const out: { kind: "image" | "clip"; prompt: string; path: (string | number)[] }[] = [];
+export function pendingMedia(spec: Spec): PendingMedia[] {
+  const out: PendingMedia[] = [];
   if (spec.format === "slideshow")
     spec.slides.forEach((s, i) => { if (!s.image.assetId && !s.image.color && s.image.prompt) out.push({ kind: "image", prompt: s.image.prompt, path: ["slides", i, "image"] }); });
   if (spec.format === "text" && !spec.background.assetId && !spec.background.libraryId && !spec.background.color && spec.background.prompt)
@@ -258,6 +294,16 @@ export function pendingMedia(spec: Spec): { kind: "image" | "clip"; prompt: stri
   if (spec.format === "green_screen" && !spec.background.assetId && !spec.background.color && spec.background.prompt)
     out.push({ kind: "image", prompt: spec.background.prompt, path: ["background"] });
   if (spec.format === "ugc") for (const m of brollPending(spec.broll, spec.script)) out.push({ kind: m.kind, prompt: m.prompt, path: ["broll", "shots", m.index] });
+  if (spec.format === "story") {
+    // Every picture first, then the clips made from them.
+    spec.scenes.forEach((s, i) => {
+      if ((s.source === "image" || s.source === "clip") && !s.imageId)
+        out.push({ kind: "image", prompt: scenePrompt(s.description, spec.subject, spec.style), path: ["scenes", i], key: "imageId" });
+    });
+    spec.scenes.forEach((s, i) => {
+      if (s.source === "clip" && !s.clipId) out.push({ kind: "clip", prompt: clipPrompt(s.description), path: ["scenes", i], key: "clipId", from: "imageId", seconds: s.clipSeconds });
+    });
+  }
   return out;
 }
 /**
@@ -265,9 +311,10 @@ export function pendingMedia(spec: Spec): { kind: "image" | "clip"; prompt: stri
  * current words. `characterKind` tells library characters from people's own (they cost more per second).
  */
 export function specCredits(spec: Spec, characterKind: AvatarKind = "library") {
-  let credits = pendingMedia(spec).reduce((n, m) => n + (m.kind === "clip" ? CLIP_CREDITS : IMAGE_CREDITS), 0);
+  let credits = pendingMedia(spec).reduce((n, m) => n + (m.kind === "clip" ? CLIP_CREDITS * ((m.seconds ?? CLIP_SECONDS) / CLIP_SECONDS) : IMAGE_CREDITS), 0);
   const t = talking(spec);
   if (t && !recordingCurrent(spec)) credits += talkingCredits(t.text, characterKind);
+  if (spec.format === "story" && spec.narration.kind === "voice" && !narrationCurrent(spec)) credits += voiceCredits(storyScript(spec.scenes));
   return credits;
 }
 export { voiceCredits, avatarCredits, speechSeconds };
@@ -280,6 +327,7 @@ export function estimatedSeconds(spec: Spec) {
     case "ugc": return speechSeconds(spec.script) + 0.5;
     case "hook_demo": return Math.min(HOOK_CLIP_MAX_SECONDS, "line" in spec.hookClip ? speechSeconds(spec.hookClip.line) : 3) + spec.demo.seconds;
     case "clip": return spec.source.end - spec.source.start;
+    case "story": return narrationCurrent(spec) && spec.generated?.words.length ? spec.generated.words.at(-1)!.end + 0.3 : speechSeconds(storyScript(spec.scenes)) + 0.5;
   }
 }
 /** All of the owner's media asset IDs a spec references, for ownership checks. */
@@ -290,6 +338,10 @@ export function referencedAssets(spec: Spec): string[] {
   if (spec.format === "hook_demo") ids.push(spec.demo.assetId);
   if (spec.format === "ugc") ids.push(...brollAssets(spec.broll));
   if (spec.format === "clip") ids.push(spec.source.assetId);
+  if (spec.format === "story") {
+    if (spec.narration.kind === "upload") ids.push(spec.narration.assetId);
+    for (const s of spec.scenes) ids.push(s.imageId, s.clipId, s.assetId);
+  }
   if (spec.music?.assetId) ids.push(spec.music.assetId);
   return [...new Set(ids.filter((x): x is string => !!x))];
 }
@@ -300,6 +352,7 @@ export function referencedLibrary(spec: Spec): string[] {
   if (spec.format === "hook_demo" && "libraryId" in spec.hookClip) ids.push(spec.hookClip.libraryId);
   if (spec.format === "green_screen") ids.push(spec.clipId);
   if (spec.format === "ugc") ids.push(...brollLibrary(spec.broll));
+  if (spec.format === "story") ids.push(...spec.scenes.map((s) => s.libraryId));
   return [...new Set(ids.filter((x): x is string => !!x))];
 }
 /** The hook shown in lists and on the swipe card. */
@@ -307,6 +360,7 @@ export function specHook(spec: Spec) {
   if (spec.format === "slideshow") return spec.slides[0]?.text || "";
   if (spec.format === "ugc") return spec.hook || spec.script.split(/(?<=[.!?])\s/)[0] || "";
   if (spec.format === "clip") return spec.hook || spec.topic || "Clip";
+  if (spec.format === "story") return storyScript(spec.scenes).split(/(?<=[.!?])\s/)[0] || spec.topic || "";
   if (spec.format === "text" || spec.format === "green_screen") return spec.text.split("\n")[0];
   return spec.hook;
 }

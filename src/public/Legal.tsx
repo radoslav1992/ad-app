@@ -46,7 +46,8 @@ function terms(op: Operator): Section[] {
         <>
           <p>
             {name} reads the website or description you give it, builds a brand profile, writes ideas for short-form posts and makes them as videos and
-            slideshows: slideshows, wall of text, video hook &amp; demo, green screen memes and AI UGC with talking AI creators. You review, edit and approve
+            slideshows: slideshows, wall of text, video hook &amp; demo, green screen memes, AI UGC with talking AI creators, narrated videos (a voiceover,
+            AI or your own, with a picture for every sentence) and clips from your long videos. You review, edit and approve
             posts. Approved posts can be downloaded or published to social accounts you connect, at the times you choose. Automations can make new posts for
             your review every day, and AI Studio lets you make AI images and AI creators.
           </p>

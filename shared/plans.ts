@@ -75,7 +75,7 @@ export const planById = (id: string | undefined): Plan => plans.find((p) => p.id
 
 /** In every plan. */
 export const planIncludes = [
-  "Every format: slideshows, wall of text, hook & demo, green screen memes, AI UGC and clips from long videos",
+  "Every format: slideshows, wall of text, hook & demo, green screen memes, AI UGC, narrated videos and clips from long videos",
   "Brand profile from your website",
   "Captions, music and your brand colours",
   "Commercial use of everything you make",
@@ -84,9 +84,9 @@ export const planIncludes = [
 /** Every AI price in credits, built from the constants the server charges by. */
 export const tariffs: readonly { name: string; text: string }[] = [
   { name: "Rendered post", text: "No credits — counts as one post of your plan." },
-  { name: "AI image", text: `${IMAGE_CREDITS} credit per image (slide, background or character portrait).` },
-  { name: "AI video background", text: `${CLIP_CREDITS} credits per ${CLIP_SECONDS}-second clip.` },
-  { name: "AI voice", text: `1 credit per started ${VOICE_CHARS} characters.` },
+  { name: "AI image", text: `${IMAGE_CREDITS} credit per image (slide, background, scene of a narrated video or character portrait).` },
+  { name: "AI video clip", text: `${CLIP_CREDITS} credits per ${CLIP_SECONDS} seconds of clip (a moving background, B-roll, or a narrated video's scene brought to life from its picture).` },
+  { name: "AI voice", text: `1 credit per started ${VOICE_CHARS} characters (a talking creator's or a narrated video's voiceover). Your own voiceover is free.` },
   {
     name: "Talking AI creator",
     text: `${avatarRates.library} credits per started ${AVATAR_STEP} seconds with a library character, ${avatarRates.custom} with your own character; plus the voice.`,

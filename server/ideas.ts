@@ -18,7 +18,7 @@ import { speechSeconds } from "../shared/credits";
 
 export type CatalogItem = { ref: string; id: string; name: string; tags?: string; seconds?: number; gender?: string; kind?: "library" | "custom"; speech?: boolean };
 export type Catalog = { images: CatalogItem[]; videos: CatalogItem[]; clips: CatalogItem[]; greens: CatalogItem[]; music: CatalogItem[]; characters: CatalogItem[] };
-export type Capabilities = { aiMedia: boolean; talking: boolean };
+export type Capabilities = { aiMedia: boolean; talking: boolean; /** AI voices (narrated videos). */ voice?: boolean };
 
 /** Everything the writer may use for this workspace (ready media only). `chosen` are IDs the person picked: they
  *  lead their lists, so a pick from deep in a large library or upload history is never cut off by the limits. */
@@ -55,6 +55,7 @@ export function feasible(requested: FormatId[], c: Catalog, caps: Capabilities, 
     else if (f === "green_screen" && !c.greens.length) missing[f] = "Green screen clips aren't available yet.";
     else if (f === "green_screen" && !c.images.length && !(useCredits && caps.aiMedia)) missing[f] = "Add a screenshot or product image first.";
     else if (f === "ugc" && !talkingOk) missing[f] = useCredits ? "AI creators aren't available yet." : "AI UGC uses AI credits — turn them on.";
+    else if (f === "story" && !(useCredits && caps.aiMedia && caps.voice)) missing[f] = useCredits ? "Narrated videos aren't available yet." : "Narrated videos use AI credits — turn them on.";
     else ok.push(f);
   }
   return { ok, missing };
@@ -118,6 +119,8 @@ const rules: Record<FormatId, string> = {
     "ugc: `script` is what an AI creator says to camera, 60–110 words: hook in the first sentence, then the value, then (with mention on) a call to action." +
     " Spoken English-style plain text in the brand's language: no emojis, hashtags, stage directions or brackets. `text`: an on-screen title of at most 8 words." +
     " `character`: a characterN; `voice`: a voice id whose gender matches the character.",
+  // Narrated videos have their own writer (server/story.ts, writeStory); they are never in this plan.
+  story: "",
 };
 /** Asks the text model for one post per entry of `plan` (formats in order). */
 export async function writeConcepts(env: Env, r: IdeaRequest): Promise<Concept[]> {
@@ -134,7 +137,7 @@ export async function writeConcepts(env: Env, r: IdeaRequest): Promise<Concept[]
     forced ? `Build every post on the hook pattern "${forced.id}" (${forced.template}).` : "Use a different hook pattern for each post, picked from the patterns list (by id).",
     r.style ? `Writing style: ${writingStyles[r.style].brief}.` : "",
     "Format rules:",
-    ...[...new Set(r.plan)].map((f) => `- ${rules[f]}`),
+    ...[...new Set(r.plan)].filter((f) => rules[f]).map((f) => `- ${rules[f]}`),
     ai ? "AI images and clips are allowed where no listed media fits." : "AI images and clips are NOT allowed: use only the listed media codes or 'color'.",
     "Media codes must come from the lists; never invent a code. Unused fields are empty strings or empty arrays.",
     "caption: 1–3 short sentences for the post description (no hashtags in it; a soft call to action when mention is on). hashtags: 3–6, lowercase, no spaces." +
@@ -186,6 +189,7 @@ const animationsFor: Record<FormatId, TextAnimation[]> = {
   hook_demo: ["pop", "rise", "fade"],
   green_screen: ["pop", "rise", "fade"],
   ugc: ["rise", "pop", "fade", "none"],
+  story: ["none"],
 };
 /** Caption styles offered when the writer repeats itself, in order: the most readable first. */
 const styleOrder: CaptionStyle[] = ["bold", "karaoke", "highlight", "classic", "pop", "bounce", "neon", "underline", "tiles", "banner", "fade", "luxe", "minimal", "outline", "retro", "sticker", "wave", "bubble", "typewriter", "impact"];
@@ -280,6 +284,9 @@ export function conceptToSpec(k: Concept, format: FormatId, r: Pick<IdeaRequest,
     const text = clean(k.text, 300), green = find(c.greens, k.greenScreen || "") || c.greens[0];
     if (!text || !green) return null;
     spec = { format, text, clipId: green.id, background: image(k.background || ""), look: lookFor(format, k.animation), seconds: Math.min(12, Math.max(5, Math.round((green.seconds || 7)))), ...common };
+  } else if (format === "story") {
+    // Written by writeStory (server/story.ts) and turned into a spec by storyToSpec.
+    return null;
   } else {
     const character = find(c.characters, k.character || "") || c.characters[0];
     // Spoken text only: stage directions, markdown and hashtags are removed.
@@ -307,6 +314,7 @@ export async function recentHooks(env: Env, workspaceId: string) {
 export const capabilities = (env: Env): Capabilities => ({
   aiMedia: !!env.FAL_KEY?.trim(),
   talking: !!env.HEYGEN_API_KEY?.trim() && !!env.ELEVENLABS_API_KEY?.trim(),
+  voice: !!env.ELEVENLABS_API_KEY?.trim(),
 });
 /** The profile stored on a workspace (defaults filled in; a damaged one reads as empty). */
 export function workspaceProfile(w: { profile: string }): Profile {
