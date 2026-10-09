@@ -8,6 +8,17 @@
 .slide-dots { position: absolute; bottom: 12px; left: 0; right: 0; display: flex; justify-content: center; gap: 5px; }
 .slide-dots span { width: 6px; height: 6px; border-radius: 50%; background: rgba(255, 255, 255, 0.5); }
 .slide-dots span.on { background: #fff; }
-.text-preview .tp-stage { position: absolute; top: 0; left: 0; transform-origin: 0 0; pointer-events: none; }
-.tp-line { position: absolute; left: 0; right: 0; text-align: center; transform: translateY(-50%); font-family: "Noto Sans", sans-serif; white-space: pre; paint-order: stroke fill; }
-.tp-box { position: absolute; left: 50%; transform: translate(-50%, -50%); }
+/* A carousel: its slides at their own shape (4:5 or 1:1), centred in the phone, the dots under them. */
+.phone-frame.carousel { display: flex; flex-direction: column; justify-content: center; }
+.phone-frame.carousel > img { position: static; width: 100%; height: auto; aspect-ratio: var(--slide, 4 / 5); object-fit: contain; }
+.phone-frame.carousel .carousel-nav { display: flex; align-items: center; justify-content: center; gap: 12px; padding-top: 12px; }
+.phone-frame.carousel .slide-dots { position: static; }
+.phone-frame.carousel .slide-arrow { position: static; transform: none; width: 32px; height: 32px; }
+.phone-frame.carousel .slide-arrow:disabled { opacity: 0.35; cursor: default; }
+.text-preview .tp-color { position: absolute; inset: 0; }
+.text-preview .tp-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+/* B-roll cut-aways: over the creator, under the text; shown by the preview's clock. */
+.text-preview .tp-cut { position: absolute; inset: 0; overflow: hidden; visibility: hidden; background: linear-gradient(160deg, #2a2160, #1e2433); }
+.text-preview .tp-cut > img, .text-preview .tp-cut > video { width: 100%; height: 100%; object-fit: cover; transform-origin: 0 0; display: block; }
+.text-preview .tp-cut-label { position: absolute; inset: 30% 12% auto; text-align: center; font-size: 13px; font-weight: 600; color: #e6e1ff; line-height: 1.35; }
+.text-preview .mute { z-index: 1; }

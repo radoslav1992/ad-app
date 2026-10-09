@@ -1,0 +1,35 @@
+/* Creators at scale (src/app/creators.tsx, Creators and Admin): the creator picker, paged lists and the admins'
+   bulk tools. Builds on pages.css (pick-grid, pick-item, search, chips). */
+
+.pick-grid.creator-pick { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+.pick-item.portrait { aspect-ratio: 3 / 4; }
+.pick-item .badge-row { top: 6px; left: 6px; right: 38px; }
+.pick-item .badge-row .chip { padding: 2px 7px; font-size: 11px; }
+.list-stale { opacity: 0.55; transition: opacity 0.15s; }
+.more-row { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 18px; text-align: center; }
+.select.compact { width: auto; padding: 8px 12px; font-size: 14px; }
+
+/* Filters above a long list: search grows, the selects keep their size. */
+.filter-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.filter-bar .search { flex: 1 1 220px; max-width: 360px; }
+.filter-bar label.row { flex: none; }
+
+/* The chosen creator (Create) */
+.creator-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.creator-chosen { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.creator-chosen img, .creator-chosen .portrait-slot { width: 48px; aspect-ratio: 3 / 4; border-radius: 10px; object-fit: cover; background: #e9ebef; flex: none; }
+.creator-chosen .portrait-slot { display: grid; place-items: center; color: var(--muted); }
+.creator-chosen strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.creator-chosen .small { display: block; }
+
+/* Admin: selection, bulk actions and import results */
+.table .check-cell { width: 44px; }
+.check-cell input { width: 18px; height: 18px; cursor: pointer; display: block; }
+.bulk-bar { position: sticky; bottom: 16px; z-index: 6; display: flex; align-items: center; justify-content: space-between; gap: 10px 16px; flex-wrap: wrap;
+  padding: 10px 14px; margin-top: 14px; background: var(--surface); border: 1px solid var(--line-2); border-radius: 16px; box-shadow: 0 16px 40px rgba(15, 17, 21, 0.18); }
+.bulk-bar .row { flex-wrap: wrap; gap: 8px; }
+.bulk-bar .select.compact { padding: 5px 10px; font-size: 13px; border-radius: 10px; }
+.import-results { max-height: 360px; overflow: auto; }
+.import-results td { vertical-align: top; }
+.import-results code { overflow-wrap: anywhere; }
+.ids-box { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }

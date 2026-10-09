@@ -1,14 +1,17 @@
 import { now } from "../types";
-import type { FailureCode, Platform, PublishContext, PublishResult, Tokens } from "./types";
+import type { FailureCode, Platform, PostStats, PublishContext, PublishResult, Tokens } from "./types";
 import { SocialError, failure, oauthFailure, safeCode } from "./errors";
-import { bearer, form, json, send } from "./http";
+import { bearer, count, form, json, send } from "./http";
 
 // Instagram API with Instagram Login (professional accounts), on graph.instagram.com.
 const AUTHORIZE = "https://www.instagram.com/oauth/authorize";
 const TOKEN = "https://api.instagram.com/oauth/access_token";
 const GRAPH = "https://graph.instagram.com";
 const VERSION = "v23.0";
-const SCOPES = ["instagram_business_basic", "instagram_business_content_publish"] as const;
+// manage_insights reads views and shares (likes and comments come with basic); connections made before it was asked
+// for lack it and are asked to reconnect.
+const INSIGHTS_SCOPE = "instagram_business_manage_insights";
+const SCOPES = ["instagram_business_basic", "instagram_business_content_publish", INSIGHTS_SCOPE] as const;
 const DAY = 86400;
 
 /** Meta error codes (and subcodes) and what they mean for us. */
@@ -51,6 +54,18 @@ async function longLived(url: string): Promise<Tokens> {
     throw failure("instagram", r.status, typeof e === "object" ? metaCode(r.status, e) : null, safeCode(e?.code ?? e));
   }
   return { accessToken: d.access_token, expiresAt: now() + (Number(d.expires_in) || 60 * DAY) };
+}
+
+/** A media insights answer (metric=views,shares,saved) as counts; a metric Instagram didn't return stays null. */
+export function instagramInsights(body: any): { views: number | null; shares: number | null; saves: number | null } {
+  const out: { views: number | null; shares: number | null; saves: number | null } = { views: null, shares: null, saves: null };
+  for (const m of Array.isArray(body?.data) ? body.data : []) {
+    const value = count(m?.values?.[0]?.value ?? m?.total_value?.value);
+    if (m?.name === "views") out.views = value;
+    if (m?.name === "shares") out.shares = value;
+    if (m?.name === "saved") out.saves = value;
+  }
+  return out;
 }
 
 async function container(tokens: Tokens, igId: string, fields: Record<string, string>) {
@@ -125,6 +140,8 @@ export const instagram: Platform = {
     // https://developers.facebook.com/docs/instagram-platform/reference/access_token
     const q = new URLSearchParams({ grant_type: "ig_exchange_token", client_secret: env.INSTAGRAM_APP_SECRET!, access_token: short.access_token });
     const tokens = await longLived(`${GRAPH}/access_token?${q}`);
+    // Kept to know later whether stats may be read (the long-lived token answer doesn't list them).
+    if (short.permissions) tokens.scope = granted.map((p: unknown) => String(p).trim()).filter(Boolean).join(",");
     // https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/get-started
     // `user_id` is the professional account ID used for publishing (and in webhooks); `id` is app-scoped.
     const me = await graph(tokens, "/me", { query: { fields: "user_id,username,name,profile_picture_url" } });
@@ -167,6 +184,37 @@ export const instagram: Platform = {
     }
     // Nothing is public until media_publish; containers that are never published expire after a day.
     return { state: "processing", ticket: { stage: "container", container: creation } };
+  },
+
+  async stats(_env, tokens, ids) {
+    const out = new Map<string, PostStats>();
+    const insights = !tokens.scope || tokens.scope.split(/[,\s]+/).includes(INSIGHTS_SCOPE);
+    for (const mediaId of [...new Set(ids.map(id).filter(Boolean))]) {
+      let media: any;
+      try {
+        // https://developers.facebook.com/docs/instagram-platform/reference/instagram-media
+        media = await graph(tokens, `/${mediaId}`, { query: { fields: "like_count,comments_count" } });
+      } catch (e) {
+        // Error 100: the media was deleted (or isn't this account's). Anything else concerns the whole account.
+        if (e instanceof SocialError && /^100(\.|$)/.test(e.detail)) continue;
+        throw e;
+      }
+      const s: PostStats = { views: null, likes: count(media.like_count), comments: count(media.comments_count), shares: null };
+      if (!insights) s.limited = true;
+      else {
+        try {
+          // https://developers.facebook.com/docs/instagram-platform/reference/instagram-media/insights
+          Object.assign(s, instagramInsights(await graph(tokens, `/${mediaId}/insights`, { query: { metric: "views,shares,saved" } })));
+        } catch (e) {
+          if (!(e instanceof SocialError) || e.code === "AUTH_EXPIRED" || e.retryable) throw e;
+          // A permission error: the connection predates the insights scope. Any other refusal is a metric this kind of
+          // media lacks; likes and comments still count.
+          if (e.code === "PERMISSION") s.limited = true;
+        }
+      }
+      out.set(mediaId, s);
+    }
+    return out;
   },
 
   async status(_env, ctx, ticket): Promise<PublishResult> {

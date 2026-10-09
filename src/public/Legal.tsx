@@ -1,7 +1,8 @@
-import type { ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, type ReactNode } from "react";
+import { Link, useLocation } from "react-router-dom";
 import { PRODUCT } from "../../shared/brand";
 import { TRIAL_DAYS } from "../../shared/plans";
+import { WITHDRAWAL_DAYS } from "../../shared/withdrawal";
 import { publicPages } from "../../shared/seo";
 import { usePublicConfig } from "./PublicLayout";
 import "./public.css";
@@ -12,7 +13,7 @@ import "./public.css";
 // both together, and the date in shared/seo.ts, whenever the text changes.
 
 /** Who runs the service, from the site configuration (COMPANY_NAME, COMPANY_ADDRESS, CONTACT_EMAIL). */
-type Operator = { name: ReactNode; address: string | null; contact: ReactNode };
+type Operator = { name: ReactNode; address: string | null; contact: ReactNode; plain: string };
 type Section = { id: string; title: string; body: ReactNode };
 
 const formatDate = (iso: string) =>
@@ -45,7 +46,8 @@ function terms(op: Operator): Section[] {
         <>
           <p>
             {name} reads the website or description you give it, builds a brand profile, writes ideas for short-form posts and makes them as videos and
-            slideshows: slideshows, wall of text, video hook &amp; demo, green screen memes and AI UGC with talking AI creators. You review, edit and approve
+            slideshows: slideshows, carousels (designed picture slides), wall of text, video hook &amp; demo, green screen memes, AI UGC with talking AI creators, narrated videos (a voiceover,
+            AI or your own, with a picture for every sentence) and clips from your long videos. You review, edit and approve
             posts. Approved posts can be downloaded or published to social accounts you connect, at the times you choose. Automations can make new posts for
             your review every day, and AI Studio lets you make AI images and AI creators.
           </p>
@@ -91,7 +93,8 @@ function terms(op: Operator): Section[] {
           <h3>Cancelling</h3>
           <p>
             You can cancel at any time from Billing in the app. Your plan keeps working until the end of the month you have paid for and then is not renewed.
-            We don't refund partly used months, except where the law requires it. If a payment is refunded in full or disputed, the paid plan ends at once.
+            We don't refund partly used months, except where the law requires it — such as a withdrawal within {WITHDRAWAL_DAYS} days (see{" "}
+            <a href="#withdrawal">Your right to withdraw</a>). If a payment is refunded in full or disputed, the paid plan ends at once.
           </p>
           <h3>Posts and AI credits</h3>
           <p>
@@ -105,6 +108,51 @@ function terms(op: Operator): Section[] {
             If a payment fails, Stripe will try again and we may limit paid features until it succeeds. We will tell you at least 30 days before a price
             change applies to your subscription, and you can cancel before it does.
           </p>
+        </>
+      ),
+    },
+    {
+      id: "withdrawal",
+      title: "Your right to withdraw",
+      body: (
+        <>
+          <p>
+            If you are a consumer, you can withdraw from a paid plan within {WITHDRAWAL_DAYS} days of subscribing, without giving a reason. The right
+            applies to the start of the contract, not to each monthly renewal.
+          </p>
+          <h3>How to withdraw</h3>
+          <p>
+            Tell us clearly that you withdraw: use our <Link to="/contact?topic=withdrawal">contact form</Link> with the topic “Withdraw from my plan”, or
+            write to us, from your account's email or mentioning it. You can use the model form below, but you don't have to. It is enough to send your
+            message before the {WITHDRAWAL_DAYS} days are over.
+          </p>
+          <h3>Starting straight away</h3>
+          <p>
+            A paid plan starts within the {WITHDRAWAL_DAYS} days only at your express request: before payment you confirm that you want it to start
+            straight away, and that if you withdraw in that period you get back what you paid less the share of the plan you used. We confirm this request
+            by email after payment.
+          </p>
+          <h3>What you get back</h3>
+          <p>
+            What you paid for the plan, less the share of it you used: the larger of the share of the month's posts and the share of the month's AI
+            credits that you used. For example, if you used 25% of your AI credits and 10% of your posts, you get back 75% of what you paid; if you used
+            nothing, you get back everything. We refund within 14 days of receiving your withdrawal, to the payment method you used. Your plan ends at once:
+            there are no further charges, and its remaining posts and AI credits stop.
+          </p>
+          <section id="withdrawal-form" className="model-form" aria-labelledby="withdrawal-form-title">
+            <h3 id="withdrawal-form-title">Model withdrawal form</h3>
+            <p className="small">(Complete and return this form only if you wish to withdraw from the contract.)</p>
+            <ul>
+              <li>To: {op.plain}</li>
+              <li>I/We (*) hereby give notice that I/We (*) withdraw from my/our (*) contract for the provision of the following service: the {PRODUCT.name} … plan</li>
+              <li>Ordered on (*) / received on (*): …</li>
+              <li>Name of consumer(s) and the account's email: …</li>
+              <li>Address of consumer(s): …</li>
+              <li>Signature of consumer(s) (only if this form is notified on paper): …</li>
+              <li>Date: …</li>
+            </ul>
+            <p className="small">(*) Delete as appropriate.</p>
+          </section>
         </>
       ),
     },
@@ -233,8 +281,9 @@ function terms(op: Operator): Section[] {
       body: (
         <>
           <p>
-            You can stop using {name} at any time and delete your account in Settings. Deleting your account cancels any paid plan and deletes your data as
-            described in the <Link to="/privacy">Privacy Policy</Link>; download anything you want to keep first.
+            You can stop using {name} at any time and delete your account in Settings. Deleting your account cancels any paid plan at once, without a refund
+            of the rest of the month, and deletes your data as described in the <Link to="/privacy">Privacy Policy</Link>; download anything you want to
+            keep first. To withdraw within {WITHDRAWAL_DAYS} days with a refund, contact us before you delete your account.
           </p>
           <p>
             We may suspend or close your account, or remove content, if you seriously or repeatedly break these terms, if you don't pay, if the law or a
@@ -353,11 +402,15 @@ function privacy(op: Operator): Section[] {
           </li>
           <li>
             <strong>Connected social accounts:</strong> access tokens (stored encrypted), the account's name, ID and picture, and information about posts we
-            publish for you (schedule, status, links and error messages).
+            publish for you (schedule, status, links, error messages, and the views, likes, comments and shares the network reports for them).
           </li>
           <li>
             <strong>Billing:</strong> your plan, subscription status and invoices. Card details are collected and stored by Stripe; we never see your full card
             number.
+          </li>
+          <li>
+            <strong>Contract records:</strong> your request at checkout for the plan to start straight away (its time and wording), and any withdrawal (the
+            amounts paid and refunded, the share of the plan used, and the dates).
           </li>
           <li>
             <strong>Messages:</strong> what you send us through the contact form or by email.
@@ -438,7 +491,7 @@ function privacy(op: Operator): Section[] {
                 </tr>
                 <tr>
                   <th scope="row">TikTok, Meta (Instagram), Google (YouTube), LinkedIn</th>
-                  <td>Publishing — only when you connect an account</td>
+                  <td>Publishing and reading your posts' stats — only when you connect an account</td>
                   <td>The posts you schedule, their captions, and the account tokens</td>
                 </tr>
               </tbody>
@@ -447,6 +500,26 @@ function privacy(op: Operator): Section[] {
           <p>
             These providers process data under their own security and privacy commitments. We may also disclose data when the law requires it, to protect
             people's safety or our rights, or to a buyer if our business is sold (you will be told first, and this policy will keep applying).
+          </p>
+        </>
+      ),
+    },
+    {
+      id: "clicks",
+      title: "Clicks and sales we count for customers",
+      body: (
+        <>
+          <p>
+            When you turn on tracked links or add our sales snippet to your website, we count for you how often each tracked link is followed (a number per
+            link and day) and the sales or sign-ups your site reports to us (the amount, the currency and a one-way hash of the order ID, so a repeat counts
+            once). We don't keep anything about the people who click or buy: no names, email addresses, IP addresses, cookies or device fingerprints. To keep
+            the numbers honest we skip link previews and bots, and use rate-limit counters keyed by a hash of the visitor's IP address that expire within the
+            hour.
+          </p>
+          <p>
+            The snippet sets no cookies. It keeps the code of the last tracked link a visitor arrived from in your website's own browser storage for 30 days,
+            so a later sale can be credited to the post that brought them. Counts are kept for 13 months. For these counts we act on your behalf, and you
+            should mention them in your own website's privacy notice.
           </p>
         </>
       ),
@@ -465,20 +538,37 @@ function privacy(op: Operator): Section[] {
       id: "retention",
       title: "How long we keep data",
       body: (
-        <ul>
-          <li>Account, workspace and content data: for as long as you have an account. You can delete posts, uploads and workspaces at any time.</li>
-          <li>
-            When you delete your account (Settings › Delete account), we cancel any paid plan and delete your account, workspaces, posts and social connections
-            straight away; stored files are removed by our clean-up job shortly after.
-          </li>
-          <li>
-            We keep a one-way hash of your email address with your trial usage after deletion, so the free trial can't be restarted with the same mailbox.
-          </li>
-          <li>Billing records: as long as tax and accounting law requires. Stripe keeps its own records under its policies.</li>
-          <li>Contact messages: as long as needed to answer you and handle any follow-up.</li>
-          <li>Security data such as sign-in attempts and rate-limit counters expires automatically, usually within hours to days.</li>
-          <li>Posts you published stay on the social networks until you remove them there.</li>
-        </ul>
+        <>
+          <p>We keep data only as long as we need it. Our maintenance job removes what has expired every hour.</p>
+          <ul>
+            <li>Account, workspace and content data: for as long as you have an account. You can delete posts, uploads and workspaces at any time.</li>
+            <li>Sessions: up to 30 days. Email confirmation links: 24 hours; password reset links: 1 hour.</li>
+            <li>Accounts whose email address was never confirmed: deleted with everything in them after 30 days.</li>
+            <li>Security data such as sign-in attempts and rate-limit counters: until their time window ends, at most a day.</li>
+            <li>
+              Details of AI work — the prompts and descriptions sent to AI providers, their request references and temporary file links: 30 days after the
+              work finished. What was made stays in your account.
+            </li>
+            <li>Failed or cancelled publications: the temporary media link and the network's request reference go after 30 days; the record stays.</li>
+            <li>Uploads that failed their check: 7 days. Unfinished uploads: 1 day.</li>
+            <li>Contact messages: 12 months.</li>
+            <li>Daily click counts and reported sales from tracked links: 13 months.</li>
+            <li>
+              Free trial: a keyed one-way hash of your mailbox with the trial usage, so the trial can't be restarted with the same mailbox — 24 months after
+              it was last needed (the trial or a sign-in), also after your account is deleted. Not your email address itself.
+            </li>
+            <li>
+              Your acceptance of the terms and your request at checkout to start straight away: while you have an account and 5 years after it is deleted,
+              as evidence of the contract. Withdrawals: 5 years.
+            </li>
+            <li>Billing records: as long as tax and accounting law requires. Stripe keeps its own records under its policies.</li>
+            <li>
+              When you delete your account (Settings › Delete account), we cancel any paid plan and delete your account, workspaces, posts and social
+              connections straight away; stored files are removed by our clean-up job shortly after. Only the records named above are kept.
+            </li>
+            <li>Posts you published stay on the social networks until you remove them there.</li>
+          </ul>
+        </>
       ),
     },
     {
@@ -547,9 +637,17 @@ function privacy(op: Operator): Section[] {
 
 export function Legal({ page }: { page: "terms" | "privacy" }) {
   const { config } = usePublicConfig();
+  const { hash } = useLocation();
+  // A link to a section from another page (e.g. /terms#withdrawal-form) lands on it once the page has been shown.
+  useEffect(() => {
+    if (!hash) return;
+    const timer = setTimeout(() => document.getElementById(decodeURIComponent(hash.slice(1)))?.scrollIntoView({ block: "start" }), 50);
+    return () => clearTimeout(timer);
+  }, [hash, page]);
   const company = config?.company;
   const op: Operator = {
     name: company?.name ? <strong>{company.name}</strong> : `the operator of ${PRODUCT.name}`,
+    plain: [company?.name || `the operator of ${PRODUCT.name}`, company?.address, company?.email].filter(Boolean).join(", "),
     address: company?.address || null,
     contact: company?.email ? (
       <>write to <a href={`mailto:${company.email}`}>{company.email}</a> or use our <Link to="/contact">contact form</Link></>
@@ -561,7 +659,7 @@ export function Legal({ page }: { page: "terms" | "privacy" }) {
   const sections = isTerms ? terms(op) : privacy(op);
   const updated = formatDate(publicPages[isTerms ? "/terms" : "/privacy"].updated);
   return (
-    <div className="wrap narrow">
+    <div className="pub-wrap narrow">
       <header className="pub-head">
         <span className="kicker">Legal</span>
         <h1>{isTerms ? "Terms of Service" : "Privacy Policy"}</h1>

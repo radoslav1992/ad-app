@@ -9,7 +9,10 @@ export function Logo({ to = "/", light = false }: { to?: string; light?: boolean
   return (
     <Link to={to} className="logo" aria-label={`${PRODUCT.name} home`} style={{ color: light ? "#fff" : undefined }}>
       <span className="logo-mark" aria-hidden="true">
-        <svg width="20" height="20" viewBox="0 0 64 64"><path d="M21 44V20h13a10 10 0 0 1 0 20h-6" fill="none" stroke="#fff" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" /><circle cx="21" cy="48" r="4" fill="#fff" /></svg>
+        {/* A hook whose point turns into an upward streak. Same drawing as public/favicon.svg. */}
+        <svg width="22" height="22" viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M16 13v26a12 12 0 0 0 24 0V27" /><path d="M32 33l8-9 8 9" />
+        </svg>
       </span>
       {PRODUCT.name}
     </Link>

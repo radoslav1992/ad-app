@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { CalendarClock, Check, Download, Pencil, RotateCcw, Trash2, X, ExternalLink } from "lucide-react";
 import { api, del, errorText, fileUrl, newKey, post, usePoll, type Post } from "../lib";
 import { useCurrentWorkspace } from "./workspace";
 import { PostPlayer, phaseLabels } from "./PostView";
 import { ScheduleDialog } from "./ScheduleDialog";
 import { Modal, useToast } from "../ui";
+import { Views, plural, usePostStats } from "./stats";
 import { formats } from "../../shared/formats";
 import { platforms, type PlatformId } from "../../shared/social";
 import "./content.css";
@@ -14,7 +15,11 @@ import "./content.css";
 const views = { all: "All", blitz: "To review", approved: "Approved", making: "Being made", rejected: "Skipped", failed: "Failed" } as const;
 type View = keyof typeof views;
 type Counts = { blitz: number; making: number; approved: number; failed: number; total: number };
-type Publication = { id: string; platform: PlatformId; status: string; scheduledAt: number; url: string | null; error: string | null; accountName: string };
+type Publication = {
+  id: string; platform: PlatformId; status: string; scheduledAt: number; url: string | null; error: string | null; accountName: string;
+  /** Lifetime counts from the network, once read (null until then, and always on LinkedIn). */
+  views?: number | null; likes?: number | null; comments?: number | null; shares?: number | null;
+};
 
 export function Content() {
   const workspace = useCurrentWorkspace();
@@ -23,6 +28,18 @@ export function Content() {
   const [posts, setPosts] = useState<Post[] | null>(null);
   const [counts, setCounts] = useState<Counts | null>(null);
   const [open, setOpen] = useState<Post | null>(null);
+  const stats = usePostStats(workspace.id);
+  // ?post=<id> (from the analytics page) opens that post.
+  const [params, setParams] = useSearchParams();
+  const linked = params.get("post");
+  useEffect(() => {
+    if (!linked) return;
+    api<{ post: Post }>(`/posts/${encodeURIComponent(linked)}`).then((r) => setOpen(r.post)).catch(() => toast("That post isn't here anymore.", "bad"));
+  }, [linked, toast]);
+  const close = () => {
+    setOpen(null);
+    if (linked) setParams({}, { replace: true });
+  };
   const load = useCallback(async () => {
     try {
       const r = await api<{ posts: Post[]; counts: Counts }>(`/posts?workspace=${workspace.id}&view=${view}&limit=100`);
@@ -57,19 +74,20 @@ export function Content() {
           {posts.map((p) => (
             <button key={p.id} className="content-card" onClick={() => setOpen(p)}>
               <div className="thumb">
-                {p.renderStatus === "ready" && (p.coverAssetId || p.slides[0]) ? <img src={fileUrl(p.slides[0] || p.coverAssetId)} alt="" loading="lazy" />
+                {p.renderStatus === "ready" && (p.coverAssetId || p.slides[0]) ? <img src={fileUrl(p.slides[0] || p.coverAssetId)} alt="" loading="lazy" className={p.format === "carousel" ? "whole" : undefined} />
                   : <div className="thumb-state">{p.renderStatus === "failed" ? "Failed" : <><span className="spinner" /> {phaseLabels[p.phase || ""] || "Making…"}</>}</div>}
               </div>
               <div className="content-meta">
                 <span className="chip">{formats[p.format].name}</span>
                 <StatusChip post={p} />
+                {stats[p.id]?.views != null && <Views views={stats[p.id].views!} />}
               </div>
               <p className="content-hook">{p.hook}</p>
             </button>
           ))}
         </div>
       )}
-      {open && <PostDetail post={open} onClose={() => setOpen(null)} onChanged={load} />}
+      {open && <PostDetail post={open} onClose={close} onChanged={load} />}
     </main>
   );
 }
@@ -130,6 +148,16 @@ function PostDetail({ post: p, onClose, onChanged }: { post: Post; onClose: () =
             {p.format === "slideshow" && p.slides.map((s, i) => <a key={s} className="btn sm" href={`${fileUrl(s)}?download=1`}>Slide {i + 1}</a>)}
             <button className="btn danger" disabled={busy} onClick={() => { if (confirm("Delete this post and its files?")) void act(() => del(`/posts/${p.id}`), "Deleted.").then(onClose); }}><Trash2 size={16} /> Delete</button>
           </div>
+          {p.format === "carousel" && p.renderStatus === "ready" && p.slides.length > 0 && (
+            <div className="stack" style={{ gap: 8 }}>
+              <strong className="small">Download</strong>
+              <div className="row wrap" style={{ gap: 6 }}>
+                <a className="btn sm" href={`/api/posts/${p.id}/pdf`}><Download size={14} /> All slides as PDF</a>
+                {p.slides.map((s, i) => <a key={s} className="btn sm ghost" href={`${fileUrl(s)}?download=1`} aria-label={`Download slide ${i + 1}`}>{i + 1}</a>)}
+              </div>
+              <p className="muted small">The PDF is one document with a page per slide, for a LinkedIn document post. To add a trending sound on Instagram, post the slides from the Instagram app: its publishing API can't add music to carousels.</p>
+            </div>
+          )}
           {publications.length > 0 && (
             <div className="stack" style={{ gap: 8 }}>
               <strong className="small">Publishing</strong>
@@ -137,6 +165,9 @@ function PostDetail({ post: p, onClose, onChanged }: { post: Post; onClose: () =
                 <div key={x.id} className="row between pub-row">
                   <span className="row" style={{ gap: 8 }}><i className="pdot" style={{ background: platforms[x.platform]?.color }} />{platforms[x.platform]?.name}{x.accountName ? ` · ${x.accountName}` : ""}</span>
                   <span className="small muted">{x.status} {when(x.scheduledAt)}</span>
+                  {x.status === "published" && x.views != null && (
+                    <span className="small">{plural(x.views, "view")}{x.likes != null ? ` · ${plural(x.likes, "like")}` : ""}</span>
+                  )}
                   {x.error && <span className="small error">{x.error}</span>}
                   {x.url && <a href={x.url} target="_blank" rel="noreferrer" className="btn sm ghost" aria-label="Open the published post"><ExternalLink size={14} /></a>}
                 </div>

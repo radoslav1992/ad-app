@@ -35,7 +35,7 @@ function Shell({ title, lead, children, foot }: { title: ReactNode; lead?: React
   return (
     <div className="stage auth-page">
       <a className="skip-link" href="#main">Skip to content</a>
-      <header className="wrap auth-top">
+      <header className="pub-wrap auth-top">
         <Logo light />
         <Link className="btn outline-light sm" to="/"><ArrowLeft size={16} aria-hidden="true" /> Back to site</Link>
       </header>

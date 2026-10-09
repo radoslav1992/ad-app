@@ -4,6 +4,7 @@ import { AlertTriangle, Building2, Check, KeyRound, Pencil, Plus, Trash2, UserRo
 import { Modal, Spinner, useToast } from "../ui";
 import { ApiError, del, errorText, fileUrl, patch, post, useAuth, type Workspace } from "../lib";
 import { planById } from "../../shared/plans";
+import { WITHDRAWAL_DAYS } from "../../shared/withdrawal";
 import { useWorkspace } from "./workspace";
 import { ConfirmDialog, useSignedInUser, useStableCallback } from "./pickers";
 import "./pages.css";
@@ -269,6 +270,7 @@ function DeleteWorkspace({ workspace, onClose, onConfirm }: { workspace: Workspa
 }
 
 function DangerSection() {
+  const user = useSignedInUser();
   const navigate = useNavigate();
   const { refresh } = useAuth();
   const toast = useToast();
@@ -288,13 +290,19 @@ function DangerSection() {
       <div className="card-head">
         <div>
           <h2 id="danger-title"><AlertTriangle size={18} aria-hidden="true" style={{ verticalAlign: -2, marginRight: 6, color: "var(--red)" }} />Danger zone</h2>
-          <p>Delete your account, every workspace, post and file. A paid plan is cancelled at once.</p>
+          <p>Delete your account, every workspace, post and file. A paid plan is cancelled at once, without a refund of the rest of the month.</p>
         </div>
         <button type="button" className="btn danger" onClick={() => setOpen(true)}><Trash2 size={16} aria-hidden="true" />Delete account</button>
       </div>
       {open && (
         <ConfirmDialog title="Delete your account?" confirmLabel="Delete my account" disabled={!password} onClose={close} onConfirm={remove}>
           <p>Everything is deleted for good: workspaces, posts, files, connected accounts and creators. Any paid plan is cancelled now.</p>
+          {user.hasSubscription && (
+            <p className="notice warn">
+              Subscribed in the last {WITHDRAWAL_DAYS} days and want a refund? <Link to="/contact?topic=withdrawal" className="link">Ask to withdraw</Link> before
+              you delete your account: deleting cancels the plan without a refund.
+            </p>
+          )}
           <label className="field">
             <span>Your password</span>
             <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />

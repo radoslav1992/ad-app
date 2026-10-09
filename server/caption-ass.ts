@@ -73,6 +73,11 @@ export function captionAss(doc: CaptionDocument, offset = 0) {
     for (const item of interval.items) ass += itemEvents(item, interval.start, interval.end, time, "Default", 10);
   return ass;
 }
+/** Adds captions (times on the video's clock, drawn above on-screen text) to an ASS script for the same frame. */
+export function withCaptions(ass: string, doc: CaptionDocument, offset = 0) {
+  const events = captionAss(doc, offset).split("[Events]\n")[1].split("\n").filter((line) => line.startsWith("Dialogue:"));
+  return events.length ? ass + events.join("\n") + "\n" : ass;
+}
 /**
  * One ASS script for several scenes on the final video's clock. Frame size comes from `base`; each scene
  * keeps its own look as a separate style (S0, S1, …) and its captions are shifted by `offset`.

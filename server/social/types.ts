@@ -34,6 +34,8 @@ export type PublishContext = {
   /** The parts of `text`, for platforms that format hashtags themselves (LinkedIn). */
   caption: string;
   hashtags: string[];
+  /** The post's tracked link, already in `text` (LinkedIn adds it to its own formatting). */
+  link?: string;
   /** A short title (YouTube title, TikTok photo title, LinkedIn video title), at most 100 characters. */
   title: string;
   /** Contains realistic AI-generated people, voices or footage (disclosed where the platform asks). */
@@ -66,6 +68,12 @@ export type FailureCode =
   | "NOT_READY"
   | "PLAN";
 
+/**
+ * Lifetime counts of one published post, as the network reports them; null when it doesn't share that number.
+ * `limited`: some counts need a permission the connection lacks (the person reconnects to allow them).
+ */
+export type PostStats = { views: number | null; likes: number | null; comments: number | null; shares: number | null; /** Instagram only. */ saves?: number | null; limited?: boolean };
+
 export interface Platform {
   id: PlatformId;
   /** The developer app's credentials are set. */
@@ -79,4 +87,9 @@ export interface Platform {
   /** Starts the post: returns it published, or a ticket to poll with `status`. */
   publish(env: Env, ctx: PublishContext): Promise<PublishResult>;
   status?(env: Env, ctx: PublishContext, ticket: Ticket): Promise<PublishResult>;
+  /**
+   * Stats of published posts by external ID; posts the network doesn't return (deleted, private) are left out.
+   * Throws a SocialError for the account as a whole (PERMISSION: the connection lacks the stats scope).
+   */
+  stats?(env: Env, tokens: Tokens, ids: string[]): Promise<Map<string, PostStats>>;
 }

@@ -4,21 +4,25 @@ import { Download, Eye, Film, Mail, Music, Pencil, RefreshCw, Search, Trash2, Up
 import { Modal, Spinner, Switch, useToast } from "../ui";
 import { ApiError, bytes, del, errorText, number, patch, post, seconds, useApi, useAuth, type LibraryItem } from "../lib";
 import { ConfirmDialog, Empty, Tabs, ago, formatDate, tabPanel, useStableCallback } from "./pickers";
+import { LoadMore, useDebounced, usePaged } from "./creators";
+import { BULK_PASTE, parseLookIds, type LookImport } from "../../shared/creators";
+import { BillingTab, OperationsTab } from "./AdminOps";
+import { BrowseHeyGen } from "./HeyGenBrowse";
 import "./pages.css";
 
 type Kind = LibraryItem["kind"];
 type Overview = {
-  users: number; newUsers: number; paying: number; posts: number; failedRuns: number; activeRuns: number; published: number; failedPublications: number;
+  users: number; newUsers: number; paying: number; granted: number; posts: number; failedRuns: number; activeRuns: number; published: number; failedPublications: number;
   config: Record<string, boolean>;
 };
 type AdminItem = LibraryItem & { active: boolean; rawTags: string };
-type AdminCharacter = { id: string; name: string; description: string; gender: string; look_id: string | null; engines: string; active: number; updated_at: number };
+type AdminCharacter = { id: string; name: string; description: string; gender: string; look_id: string | null; engines: string; active: number; created_at: number; updated_at: number };
 type Message = { id: string; name: string; email: string; topic: string; message: string; created_at: number };
-type Tab = "overview" | "library" | "creators" | "messages";
-const tabIds: Tab[] = ["overview", "library", "creators", "messages"];
+type Tab = "overview" | "operations" | "billing" | "library" | "creators" | "messages";
+const tabIds: Tab[] = ["overview", "operations", "billing", "library", "creators", "messages"];
 const kindNames: Record<Kind, string> = { clip: "Clip", greenscreen: "Green screen", music: "Music" };
 const genderNames: Record<string, string> = { female: "Female", male: "Male", "": "Not specified" };
-const topics: Record<string, string> = { question: "Question", billing: "Billing", partnership: "Partnership", abuse: "Report abuse", other: "Other" };
+const topics: Record<string, string> = { question: "Question", billing: "Billing", withdrawal: "Withdrawal (14 days)", partnership: "Partnership", abuse: "Report abuse", other: "Other" };
 const flagNames: Record<string, string> = {
   media: "Media pipeline", fal: "fal.ai (AI images & clips)", elevenlabs: "ElevenLabs (voices)", heygen: "HeyGen (talking creators)", stripe: "Stripe keys",
   billing: "Billing open", tokens: "Token encryption", tiktok: "TikTok", instagram: "Instagram", youtube: "YouTube", linkedin: "LinkedIn",
@@ -26,7 +30,7 @@ const flagNames: Record<string, string> = {
 const clipTagIdeas = ["activity", "neutral/filler", "reaction", "man", "woman"];
 const MB = 1024 * 1024;
 
-/** Administration (admins only): health, the shared library, library creators and contact messages. */
+/** Administration (admins only): health, operations, billing tools, the shared library, library creators and contact messages. */
 export function AdminPage() {
   const { user } = useAuth();
   if (!user?.admin) return <Navigate to="/app" replace />;
@@ -42,16 +46,19 @@ function AdminConsole() {
       <div className="page-head">
         <div>
           <h1>Admin</h1>
-          <p>Service health, the shared library, library creators and contact messages.</p>
+          <p>Service health and operations, withdrawals and free months, the shared library, library creators and contact messages.</p>
         </div>
       </div>
       <div style={{ marginBottom: 20 }}>
         <Tabs label="Admin sections" idBase="admin" value={tab} onChange={(t) => setParams(t === "overview" ? {} : { tab: t }, { replace: true })} items={[
-          { id: "overview", label: "Overview" }, { id: "library", label: "Library" }, { id: "creators", label: "Creators" }, { id: "messages", label: "Messages" },
+          { id: "overview", label: "Overview" }, { id: "operations", label: "Operations" }, { id: "billing", label: "Billing" },
+          { id: "library", label: "Library" }, { id: "creators", label: "Creators" }, { id: "messages", label: "Messages" },
         ]} />
       </div>
       <div {...tabPanel("admin", tab)}>
         {tab === "overview" && <OverviewTab />}
+        {tab === "operations" && <OperationsTab />}
+        {tab === "billing" && <BillingTab />}
         {tab === "library" && <LibraryTab />}
         {tab === "creators" && <CreatorsTab />}
         {tab === "messages" && <MessagesTab />}
@@ -144,10 +151,10 @@ function Loading() {
 function LoadError({ error, retry }: { error: string; retry: () => void }) {
   return <div className="notice bad" role="alert">{error} <button type="button" className="link" onClick={retry}>Try again</button></div>;
 }
-function GenderSelect({ id, value, onChange }: { id: string; value: string; onChange: (v: string) => void }) {
+function GenderSelect({ id, value, onChange, label = "Gender" }: { id: string; value: string; onChange: (v: string) => void; label?: string }) {
   return (
     <div className="field">
-      <label className="label" htmlFor={id}>Gender</label>
+      <label className="label" htmlFor={id}>{label}</label>
       <select id={id} className="select" value={value} onChange={(e) => onChange(e.target.value)}>
         <option value="">Not specified</option>
         <option value="female">Female</option>
@@ -165,7 +172,7 @@ function OverviewTab() {
   if (error || !data) return <LoadError error={error || "Not available."} retry={() => void reload()} />;
   const stats: { label: string; value: number; sub?: string; bad?: boolean }[] = [
     { label: "Users", value: data.users, sub: `+${number(data.newUsers)} in the last 24 h` },
-    { label: "Paying", value: data.paying, sub: "Active subscriptions" },
+    { label: "Paying", value: data.paying, sub: `Active subscriptions${data.granted ? ` · ${number(data.granted)} free month${data.granted === 1 ? "" : "s"}` : ""}` },
     { label: "Posts made", value: data.posts, sub: "Last 24 h" },
     { label: "Runs in progress", value: data.activeRuns, sub: "Queued or running" },
     { label: "Failed runs", value: data.failedRuns, sub: "Last 24 h", bad: data.failedRuns > 0 },
@@ -478,47 +485,102 @@ function EditItemModal({ item, onClose, onSaved }: { item: AdminItem; onClose: (
 
 const portraitUrl = (c: AdminCharacter) => `/api/characters/${c.id}/image?v=${c.updated_at}`;
 const enginesOf = (c: AdminCharacter) => { try { const e = JSON.parse(c.engines); return Array.isArray(e) ? (e as string[]) : []; } catch { return []; } };
+/** IDs per bulk request (the server takes up to 500). */
+const BULK_IDS = 500;
 
 function CreatorsTab() {
   const toast = useToast();
-  const { data, loading, error, reload, setData } = useApi<{ characters: AdminCharacter[] }>("/admin/characters");
+  const [query, setQuery] = useState("");
+  const [gender, setGender] = useState("");
+  const [status, setStatus] = useState("all");
+  const [kind, setKind] = useState("all");
+  const q = useDebounced(query.trim());
+  const list = usePaged<AdminCharacter, { total?: number }>("/admin/characters", { q, gender, status, kind, limit: "50" });
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [bulkGender, setBulkGender] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [editing, setEditing] = useState<AdminCharacter | null>(null);
   const [deleting, setDeleting] = useState<AdminCharacter | null>(null);
-  const list = data?.characters || [];
-  const change = (id: string, c: Partial<AdminCharacter>) => setData((d) => (d ? { characters: d.characters.map((x) => (x.id === id ? { ...x, ...c } : x)) } : d));
+  const items = list.items, total = list.first?.total;
+  const filtered = !!q || !!gender || status !== "all" || kind !== "all";
+  const change = (ids: Set<string>, c: Partial<AdminCharacter>) => list.setItems((all) => all.map((x) => (ids.has(x.id) ? { ...x, ...c } : x)));
   const setActive = async (c: AdminCharacter, active: boolean) => {
-    change(c.id, { active: active ? 1 : 0 });
+    change(new Set([c.id]), { active: active ? 1 : 0 });
     try {
       await patch(`/admin/characters/${c.id}`, { active });
     } catch (e) {
-      change(c.id, { active: c.active });
+      change(new Set([c.id]), { active: c.active });
       toast(errorText(e), "bad");
+    }
+  };
+  const allShown = items.length > 0 && items.every((c) => selected.has(c.id));
+  const someShown = items.some((c) => selected.has(c.id));
+  const toggle = (id: string, on: boolean) => setSelected((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n; });
+  const toggleShown = (on: boolean) => setSelected((s) => { const n = new Set(s); for (const c of items) if (on) n.add(c.id); else n.delete(c.id); return n; });
+  const bulk = async (body: { active?: boolean; gender?: string }, done: string) => {
+    const ids = [...selected];
+    setBulkBusy(true);
+    let updated = 0;
+    try {
+      for (let i = 0; i < ids.length; i += BULK_IDS) updated += (await post<{ updated: number }>("/admin/characters/bulk", { ids: ids.slice(i, i + BULK_IDS), ...body })).updated;
+      change(selected, { ...(body.active !== undefined && { active: body.active ? 1 : 0 }), ...(body.gender !== undefined && { gender: body.gender }) });
+      toast(`${done} ${number(updated)} creator${updated === 1 ? "" : "s"}.`, "good");
+    } catch (e) {
+      // Earlier batches may have gone through: show the list as it is now.
+      toast(errorText(e), "bad");
+      if (updated) list.reload();
+    } finally {
+      setBulkBusy(false);
     }
   };
   return (
     <div className="stack" style={{ gap: 20 }}>
-      <div className="grid two">
-        <PortraitUpload onDone={() => void reload()} />
-        <ImportLook onDone={() => void reload()} />
-      </div>
+      <AddCreators onDone={list.reload} />
       <section aria-labelledby="creators-list-title">
         <div className="section-head">
           <div>
             <h2 id="creators-list-title">Library creators</h2>
             <p>Creators with a HeyGen look are standard; the rest are premium (animated from the portrait, at the higher rate).</p>
           </div>
+          <div className="filter-bar">
+            <label className="search">
+              <Search size={16} aria-hidden="true" />
+              <span className="sr-only">Search by name or description</span>
+              <input className="input" type="search" placeholder="Name or description" value={query} onChange={(e) => setQuery(e.target.value)} />
+            </label>
+            <select className="select compact" value={gender} onChange={(e) => setGender(e.target.value)} aria-label="Gender">
+              <option value="">Any gender</option><option value="female">Female</option><option value="male">Male</option><option value="none">Not specified</option>
+            </select>
+            <select className="select compact" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
+              <option value="all">On and off</option><option value="active">On</option><option value="off">Off</option>
+            </select>
+            <select className="select compact" value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Kind">
+              <option value="all">All kinds</option><option value="look">HeyGen look</option><option value="portrait">Portrait (premium)</option>
+            </select>
+          </div>
         </div>
-        {loading ? <Loading /> : error ? <LoadError error={error} retry={() => void reload()} /> : !list.length ? (
-          <Empty icon={<UserRound size={24} />} title="No library creators yet">Upload a portrait or import a HeyGen look above.</Empty>
+        {list.loading && !items.length ? <Loading /> : list.error && !items.length ? <LoadError error={list.error} retry={list.reload} /> : !items.length ? (
+          filtered
+            ? <Empty icon={<Search size={24} />} title="No creators match" action={<button type="button" className="btn" onClick={() => { setQuery(""); setGender(""); setStatus("all"); setKind("all"); }}>Clear filters</button>}>Try other words or filters.</Empty>
+            : <Empty icon={<UserRound size={24} />} title="No library creators yet">Upload a portrait or import HeyGen looks above.</Empty>
         ) : (
-          <div className="table-wrap">
+          <div className={`table-wrap${list.loading ? " list-stale" : ""}`} aria-busy={list.loading}>
             <table className="table">
               <caption className="sr-only">Library creators</caption>
-              <thead><tr><th scope="col">Portrait</th><th scope="col">Name</th><th scope="col">Description</th><th scope="col">HeyGen look</th><th scope="col">Active</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
+              <thead>
+                <tr>
+                  <th scope="col" className="check-cell">
+                    <input type="checkbox" aria-label="Select all shown creators" checked={allShown} onChange={(e) => toggleShown(e.target.checked)}
+                      ref={(el) => { if (el) el.indeterminate = someShown && !allShown; }} />
+                  </th>
+                  <th scope="col">Portrait</th><th scope="col">Name</th><th scope="col">Description</th><th scope="col">HeyGen look</th><th scope="col">Active</th><th scope="col"><span className="sr-only">Actions</span></th>
+                </tr>
+              </thead>
               <tbody>
-                {list.map((c) => (
+                {items.map((c) => (
                   <tr key={c.id}>
-                    <td><span className="adm-thumb"><img src={portraitUrl(c)} alt={`Portrait of ${c.name}`} loading="lazy" /></span></td>
+                    <td className="check-cell"><input type="checkbox" aria-label={`Select ${c.name}`} checked={selected.has(c.id)} onChange={(e) => toggle(c.id, e.target.checked)} /></td>
+                    <td><span className="adm-thumb"><img src={portraitUrl(c)} alt={`Portrait of ${c.name}`} loading="lazy" decoding="async" /></span></td>
                     <td><strong>{c.name}</strong><div className="small muted">{genderNames[c.gender] ?? c.gender}</div></td>
                     <td><span className="clip small" title={c.description}>{c.description || <span className="muted">None</span>}</span></td>
                     <td className="small">
@@ -537,16 +599,156 @@ function CreatorsTab() {
             </table>
           </div>
         )}
+        <LoadMore next={list.next} loading={list.loadingMore} error={list.moreError} shown={items.length} total={total} noun="creators" onMore={list.loadMore} />
+        {selected.size > 0 && (
+          <div className="bulk-bar" role="region" aria-label="Selected creators">
+            <span><strong>{number(selected.size)}</strong> selected</span>
+            <div className="row">
+              <button type="button" className="btn sm" disabled={bulkBusy} onClick={() => void bulk({ active: true }, "Switched on")}>Switch on</button>
+              <button type="button" className="btn sm" disabled={bulkBusy} onClick={() => void bulk({ active: false }, "Switched off")}>Switch off</button>
+              <select className="select compact" value={bulkGender} onChange={(e) => setBulkGender(e.target.value)} aria-label="Gender for the selected creators" disabled={bulkBusy}>
+                <option value="">Not specified</option><option value="female">Female</option><option value="male">Male</option>
+              </select>
+              <button type="button" className="btn sm" disabled={bulkBusy} onClick={() => void bulk({ gender: bulkGender }, "Set the gender of")}>Set gender</button>
+              <button type="button" className="btn sm ghost" disabled={bulkBusy} onClick={() => setSelected(new Set())}>Clear selection</button>
+              {bulkBusy && <Spinner label="Saving" />}
+            </div>
+          </div>
+        )}
       </section>
-      {editing && <EditCreatorModal creator={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void reload(); }} />}
+      {editing && <EditCreatorModal creator={editing} onClose={() => setEditing(null)} onSaved={(c) => { list.setItems((all) => all.map((x) => (x.id === c.id ? c : x))); setEditing(null); }} />}
       {deleting && (
         <ConfirmDialog title="Delete this creator?" onClose={() => setDeleting(null)} onConfirm={async () => {
           await del(`/admin/characters/${deleting.id}`);
-          setData((d) => (d ? { characters: d.characters.filter((x) => x.id !== deleting.id) } : d));
+          list.setItems((all) => all.filter((x) => x.id !== deleting.id));
+          list.setFirst((f) => (f && f.total !== undefined ? { ...f, total: Math.max(0, f.total - 1) } : f));
+          toggle(deleting.id, false);
           toast("Deleted.", "good");
         }}>
           <p><strong>{deleting.name}</strong> is removed from the library for everyone. To hide them only, switch them off instead.</p>
         </ConfirmDialog>
+      )}
+    </div>
+  );
+}
+
+type AddMode = "browse" | "looks" | "look" | "portrait";
+/** The ways to add library creators, in one card. Every form stays mounted, so a running import keeps going. */
+function AddCreators({ onDone }: { onDone: () => void }) {
+  const [mode, setMode] = useState<AddMode>("browse");
+  return (
+    <section className="card" aria-labelledby="add-creators-title">
+      <div className="card-head" style={{ alignItems: "center" }}>
+        <h2 id="add-creators-title">Add library creators</h2>
+        <Tabs label="How to add creators" idBase="add-creators" value={mode} onChange={setMode} items={[
+          { id: "browse", label: "Browse HeyGen" }, { id: "looks", label: "HeyGen looks" }, { id: "look", label: "One look, with details" }, { id: "portrait", label: "Portrait" },
+        ]} />
+      </div>
+      {(["browse", "looks", "look", "portrait"] as const).map((m) => (
+        <div key={m} hidden={mode !== m} {...(mode === m && tabPanel("add-creators", m))}>
+          {m === "browse" ? <BrowseHeyGen onDone={onDone} /> : m === "looks" ? <BulkImport onDone={onDone} /> : m === "look" ? <ImportLook onDone={onDone} /> : <PortraitUpload onDone={onDone} />}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+const importLabels: Record<LookImport["status"], { label: string; tone: string }> = {
+  failed: { label: "Failed, try again", tone: "red" }, unusable: { label: "Can't be used", tone: "orange" }, exists: { label: "Already in the library", tone: "" }, imported: { label: "Imported", tone: "green" },
+};
+/** Bulk import requests: small, so the progress moves and a stop takes effect quickly. */
+const IMPORT_CHUNK = 10;
+
+/** Many HeyGen looks at once: pasted IDs are checked a few at a time, each with its own result. */
+function BulkImport({ onDone }: { onDone: () => void }) {
+  const [text, setText] = useState("");
+  const [gender, setGender] = useState("");
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [results, setResults] = useState<LookImport[]>([]);
+  const [problem, setProblem] = useState<string | null>(null);
+  const stop = useRef(false);
+  const { ids, repeated } = parseLookIds(text);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (progress) return;
+    setProblem(null);
+    if (!ids.length) return setProblem("Paste at least one look ID.");
+    if (ids.length > BULK_PASTE) return setProblem(`Paste up to ${number(BULK_PASTE)} look IDs at a time.`);
+    stop.current = false;
+    const all: LookImport[] = [];
+    setResults([]);
+    setProgress({ done: 0, total: ids.length });
+    try {
+      for (let i = 0; i < ids.length && !stop.current; i += IMPORT_CHUNK) {
+        const r = await post<{ results: LookImport[] }>("/admin/characters/import/bulk", { lookIds: ids.slice(i, i + IMPORT_CHUNK), gender });
+        all.push(...r.results);
+        setResults([...all]);
+        setProgress({ done: all.length, total: ids.length });
+      }
+      if (all.length === ids.length) setText("");
+      else setProblem(`Stopped after ${number(all.length)} of ${number(ids.length)}. The rest are still in the box.`);
+      if (all.length < ids.length) setText(ids.slice(all.length).join("\n"));
+    } catch (err) {
+      // Requests already answered stay imported; the rest (including the one that failed) stay in the box.
+      setProblem(`${errorText(err)}${all.length ? ` ${number(all.length)} of ${number(ids.length)} were checked; the rest are still in the box.` : ""}`);
+      setText(ids.slice(all.length).join("\n"));
+    } finally {
+      setProgress(null);
+      if (all.some((r) => r.status === "imported")) onDone();
+    }
+  };
+  const counts = { imported: 0, exists: 0, unusable: 0, failed: 0 };
+  for (const r of results) counts[r.status]++;
+  const order: LookImport["status"][] = ["failed", "unusable", "exists", "imported"];
+  const sorted = [...results].sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status));
+  const retry = results.filter((r) => r.status === "failed").map((r) => r.lookId);
+  return (
+    <div>
+      <p className="muted small" style={{ marginBottom: 14 }}>
+        Paste look IDs, one per line or separated by commas. Each is checked with HeyGen (it needs the Avatar III engine), named after the look and given
+        its preview as the portrait; looks already in the library are skipped. Up to {number(BULK_PASTE)} at a time.
+      </p>
+      <form className="stack" onSubmit={submit}>
+        <div className="form-grid">
+          <div className="field full">
+            <label className="label" htmlFor="bulk-ids">Look IDs <span className="counter">{number(ids.length)} ID{ids.length === 1 ? "" : "s"}{repeated ? ` · ${number(repeated)} repeated, counted once` : ""}</span></label>
+            <textarea id="bulk-ids" className="textarea ids-box" rows={5} value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} disabled={!!progress}
+              placeholder={"One look ID per line, or separated by commas"} />
+          </div>
+          <GenderSelect id="bulk-gender" value={gender} onChange={setGender} label="Gender (for all of them)" />
+        </div>
+        {problem && <div className="notice bad" role="alert">{problem}</div>}
+        <div className="row" style={{ flexWrap: "wrap" }}>
+          <button type="submit" className="btn primary" disabled={!!progress || !ids.length}>
+            {progress ? <Spinner label="Importing" /> : <UploadIcon size={16} aria-hidden="true" />}Import {ids.length > 1 ? `${number(ids.length)} looks` : "look"}
+          </button>
+          {progress && <button type="button" className="btn" onClick={() => { stop.current = true; }}>Stop</button>}
+          {progress && <span className="small muted" role="status">Checked {number(progress.done)} of {number(progress.total)}…</span>}
+          {progress && <div className="meter grow" style={{ maxWidth: 260 }} aria-hidden="true"><span style={{ width: `${Math.max(2, (progress.done / progress.total) * 100)}%` }} /></div>}
+        </div>
+      </form>
+      {results.length > 0 && (
+        <div className="stack" style={{ marginTop: 16 }}>
+          <div className="row" style={{ flexWrap: "wrap" }} role="status">
+            {order.filter((s) => counts[s]).map((s) => <span key={s} className={`chip ${importLabels[s].tone}`}>{importLabels[s].label} · {number(counts[s])}</span>)}
+            {retry.length > 0 && !progress && <button type="button" className="btn sm" onClick={() => { setText((t) => parseLookIds(`${t}\n${retry.join("\n")}`).ids.join("\n")); setProblem(null); }}>Put the failed IDs back in the box</button>}
+          </div>
+          <div className="table-wrap import-results">
+            <table className="table">
+              <caption className="sr-only">Import results, problems first</caption>
+              <thead><tr><th scope="col">Look ID</th><th scope="col">Result</th><th scope="col">Creator or reason</th></tr></thead>
+              <tbody>
+                {sorted.map((r) => (
+                  <tr key={r.lookId}>
+                    <td><code>{r.lookId}</code></td>
+                    <td><span className={`chip ${importLabels[r.status].tone}`}>{importLabels[r.status].label}</span></td>
+                    <td className="small">{r.name && <strong>{r.name}</strong>}{r.name && r.error && " · "}{r.error}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -583,8 +785,7 @@ function PortraitUpload({ onDone }: { onDone: () => void }) {
     }
   };
   return (
-    <section className="card" aria-labelledby="portrait-title">
-      <h2 id="portrait-title" style={{ marginBottom: 4 }}>Upload a portrait</h2>
+    <div>
       <p className="muted small" style={{ marginBottom: 14 }}>A premium creator, animated from this image. Portrait 3:4 or 9:16, up to 10 MB.</p>
       <form className="stack" onSubmit={submit}>
         <div className="row">
@@ -601,7 +802,7 @@ function PortraitUpload({ onDone }: { onDone: () => void }) {
         {problem && <div className="notice bad" role="alert">{problem}</div>}
         <button type="submit" className="btn primary" style={{ alignSelf: "flex-start" }} disabled={busy || !file}>{busy && <Spinner label="Uploading" />}Add creator</button>
       </form>
-    </section>
+    </div>
   );
 }
 
@@ -630,9 +831,8 @@ function ImportLook({ onDone }: { onDone: () => void }) {
     }
   };
   return (
-    <section className="card" aria-labelledby="import-title">
-      <h2 id="import-title" style={{ marginBottom: 4 }}>Import a HeyGen look</h2>
-      <p className="muted small" style={{ marginBottom: 14 }}>A standard creator: the look's preview becomes the portrait. It needs the Avatar III engine.</p>
+    <div>
+      <p className="muted small" style={{ marginBottom: 14 }}>A standard creator with your own name and description: the look's preview becomes the portrait. It needs the Avatar III engine.</p>
       <form className="stack" onSubmit={submit}>
         <div className="form-grid">
           <div className="field full"><label className="label" htmlFor="look-id">Look ID</label><input id="look-id" className="input" value={lookId} onChange={(e) => setLookId(e.target.value)} maxLength={160} spellCheck={false} /></div>
@@ -643,11 +843,11 @@ function ImportLook({ onDone }: { onDone: () => void }) {
         {problem && <div className="notice bad" role="alert">{problem}</div>}
         <button type="submit" className="btn primary" style={{ alignSelf: "flex-start" }} disabled={busy || !lookId.trim()}>{busy && <Spinner label="Importing" />}Import look</button>
       </form>
-    </section>
+    </div>
   );
 }
 
-function EditCreatorModal({ creator, onClose, onSaved }: { creator: AdminCharacter; onClose: () => void; onSaved: () => void }) {
+function EditCreatorModal({ creator, onClose, onSaved }: { creator: AdminCharacter; onClose: () => void; onSaved: (c: AdminCharacter) => void }) {
   const toast = useToast();
   const [name, setName] = useState(creator.name);
   const [description, setDescription] = useState(creator.description);
@@ -661,12 +861,12 @@ function EditCreatorModal({ creator, onClose, onSaved }: { creator: AdminCharact
     setBusy(true);
     const look = lookId.trim();
     try {
-      await patch(`/admin/characters/${creator.id}`, {
+      const r = await patch<{ character: AdminCharacter }>(`/admin/characters/${creator.id}`, {
         name: name.trim(), description: description.trim(), gender,
         ...(look !== (creator.look_id || "") && { lookId: look || null }),
       });
       toast("Saved.", "good");
-      onSaved();
+      onSaved(r.character);
     } catch (err) {
       toast(errorText(err), "bad");
       setBusy(false);
@@ -717,7 +917,7 @@ function MessagesTab() {
                 <strong>{m.name}</strong>
                 <div className="small"><a href={`mailto:${m.email}?subject=${encodeURIComponent(`Re: ${topics[m.topic] || "Your message"}`)}`} className="link">{m.email}</a></div>
               </td>
-              <td><span className={`chip${m.topic === "abuse" ? " red" : m.topic === "billing" ? " orange" : ""}`}>{topics[m.topic] || m.topic}</span></td>
+              <td><span className={`chip${m.topic === "abuse" ? " red" : m.topic === "billing" || m.topic === "withdrawal" ? " orange" : ""}`}>{topics[m.topic] || m.topic}</span></td>
               <td><MessageText text={m.message} /></td>
             </tr>
           ))}

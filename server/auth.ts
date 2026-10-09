@@ -12,7 +12,7 @@ import { PRODUCT } from "../shared/brand";
 export const auth = new Hono<App>();
 export const SESSION_COOKIE = "pl_session";
 /** The terms' "last updated" date: change it with the terms, so each acceptance records its version. */
-export const TERMS_VERSION = "2026-10-08";
+export const TERMS_VERSION = "2026-10-09";
 const credentials = z.object({
   email: z.email().max(254).transform((s) => s.toLowerCase().trim()),
   password: z.string().min(10, "Use at least 10 characters for your password.").max(128),

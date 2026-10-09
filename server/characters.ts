@@ -9,6 +9,7 @@ import { allowance } from "./billing";
 import { serveObject, extOf } from "./storage";
 import { dispatchRun } from "./posts";
 import { IMAGE_CREDITS } from "../shared/credits";
+import { CREATOR_PAGE, CREATOR_PAGE_MAX } from "../shared/creators";
 
 // AI creators ("characters") for AI UGC: the library administrators set up, and people's own — generated from a
 // description (one AI image) or made from their own photo. Plus AI Studio's stand-alone AI images.
@@ -22,16 +23,75 @@ export function characterView(c: any, userId: string) {
     premium: !c.look_id, image: `/api/characters/${c.id}/image?v=${c.updated_at}`,
   };
 }
+const VIEW_COLUMNS = "id,user_id,name,description,gender,look_id,created_at,updated_at";
+
+/** Search and gender filters: every word must appear in the name or the description ("none" = gender not set). */
+export function creatorFilters(q: string, gender: string) {
+  const where: string[] = [], args: unknown[] = [];
+  for (const word of q.split(/\s+/).filter(Boolean).slice(0, 5)) {
+    const like = `%${word.replace(/[\\%_]/g, (m) => "\\" + m)}%`;
+    where.push("(name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')");
+    args.push(like, like);
+  }
+  if (gender === "none") where.push("gender=''");
+  else if (gender) { where.push("gender=?"); args.push(gender); }
+  return { where, args };
+}
+/**
+ * Keyset paging in a stable order (`group` first, then newest, then ID): a page never repeats or skips a row when
+ * creators are added meanwhile. The cursor is the last row's sort key, opaque to the browser.
+ */
+export const pageCursor = {
+  of: (r: { group: number; created_at: number; id: string }) => `${r.group}.${r.created_at}.${r.id}`,
+  where(cursor: string | undefined, group: string) {
+    if (!cursor) return null;
+    const m = /^([01])\.(\d{1,12})\.([\w-]{1,64})$/.exec(cursor);
+    if (!m) throw new HTTPException(400, { message: "This list changed. Reload the page." });
+    const [g, at, id] = [Number(m[1]), Number(m[2]), m[3]];
+    return { sql: `(${group}>? OR (${group}=? AND (created_at<? OR (created_at=? AND id<?))))`, args: [g, g, at, at, id] };
+  },
+};
+const listQuery = z.object({
+  q: z.string().trim().max(80).default(""),
+  gender: z.enum(["", "female", "male"]).default(""),
+  source: z.enum(["all", "library", "own"]).default("all"),
+  cursor: z.string().max(120).optional(),
+  limit: z.coerce.number().int().min(1).max(CREATOR_PAGE_MAX).default(CREATOR_PAGE),
+});
+/** Creators to choose from, a page at a time: the person's own first, then the library, newest first. */
 characters.get("/", async (c) => {
   const user = c.get("user");
-  const rows = (await c.env.DB.prepare("SELECT * FROM characters WHERE active=1 AND (user_id IS NULL OR user_id=?) ORDER BY user_id IS NULL, created_at DESC LIMIT 200")
-    .bind(user.id).all<any>()).results;
-  const runs = (await c.env.DB.prepare("SELECT id,payload,status,error,created_at FROM runs WHERE user_id=? AND kind='character' AND created_at>? ORDER BY created_at DESC LIMIT 10")
-    .bind(user.id, now() - 86400).all<any>()).results;
-  return c.json({
-    characters: rows.map((r) => characterView(r, user.id)),
-    making: runs.filter((r) => r.status === "queued" || r.status === "running").map((r) => ({ id: r.id, name: json<any>(r.payload, {}).name })),
-  });
+  const d = listQuery.parse(c.req.query());
+  const filters = creatorFilters(d.q, d.gender);
+  const base = ["active=1", "(user_id IS NULL OR user_id=?)", ...filters.where], args: unknown[] = [user.id, ...filters.args];
+  const where = [...base], whereArgs = [...args];
+  if (d.source !== "all") where.push(d.source === "library" ? "user_id IS NULL" : "user_id IS NOT NULL");
+  const after = pageCursor.where(d.cursor, "(user_id IS NULL)");
+  if (after) { where.push(after.sql); whereArgs.push(...after.args); }
+  const rows = (await c.env.DB.prepare(`SELECT ${VIEW_COLUMNS},(user_id IS NULL) AS grp FROM characters WHERE ${where.join(" AND ")} ORDER BY grp, created_at DESC, id DESC LIMIT ?`)
+    .bind(...whereArgs, d.limit + 1).all<any>()).results;
+  const more = rows.length > d.limit, page = rows.slice(0, d.limit), last = page[page.length - 1];
+  const result: Record<string, unknown> = {
+    characters: page.map((r) => characterView(r, user.id)),
+    next: more && last ? pageCursor.of({ group: last.grp, created_at: last.created_at, id: last.id }) : null,
+  };
+  // The first page also carries the counts per source (for the same search) and the creators still being made.
+  if (!d.cursor) {
+    const n = await c.env.DB.prepare(`SELECT SUM(user_id IS NULL) AS library, SUM(user_id IS NOT NULL) AS own FROM characters WHERE ${base.join(" AND ")}`)
+      .bind(...args).first<{ library: number | null; own: number | null }>();
+    result.counts = { library: n?.library || 0, own: n?.own || 0 };
+    const runs = (await c.env.DB.prepare("SELECT id,payload,status FROM runs WHERE user_id=? AND kind='character' AND created_at>? AND status IN ('queued','running') ORDER BY created_at DESC LIMIT 10")
+      .bind(user.id, now() - 86400).all<any>()).results;
+    result.making = runs.map((r) => ({ id: r.id, name: json<any>(r.payload, {}).name }));
+  }
+  return c.json(result);
+});
+/** One creator (a picker shows the chosen one even when it isn't on a loaded page). */
+characters.get("/:id", async (c) => {
+  const user = c.get("user");
+  const row = await c.env.DB.prepare(`SELECT ${VIEW_COLUMNS} FROM characters WHERE id=? AND active=1 AND (user_id IS NULL OR user_id=?)`).bind(c.req.param("id"), user.id).first<any>();
+  if (!row) throw new HTTPException(404, { message: "Creator not found." });
+  return c.json({ character: characterView(row, user.id) });
 });
 characters.get("/:id/image", async (c) => {
   const ch = await c.env.DB.prepare("SELECT image_key,user_id FROM characters WHERE id=?").bind(c.req.param("id")).first<any>();
@@ -70,9 +130,9 @@ characters.post("/photo", async (c) => {
 });
 characters.patch("/:id", async (c) => {
   const user = c.get("user");
-  const d = z.object({ name: z.string().trim().min(1).max(40).optional(), description: z.string().trim().max(300).optional() }).parse(await c.req.json());
-  const r = await c.env.DB.prepare("UPDATE characters SET name=COALESCE(?,name),description=COALESCE(?,description),updated_at=? WHERE id=? AND user_id=?")
-    .bind(d.name ?? null, d.description ?? null, now(), c.req.param("id"), user.id).run();
+  const d = z.object({ name: characterInput.name.optional(), description: z.string().trim().max(300).optional(), gender: z.enum(["female", "male", ""]).optional() }).parse(await c.req.json());
+  const r = await c.env.DB.prepare("UPDATE characters SET name=COALESCE(?,name),description=COALESCE(?,description),gender=COALESCE(?,gender),updated_at=? WHERE id=? AND user_id=?")
+    .bind(d.name ?? null, d.description ?? null, d.gender ?? null, now(), c.req.param("id"), user.id).run();
   if (!r.meta.changes) throw new HTTPException(404, { message: "Creator not found." });
   return c.json({ ok: true });
 });

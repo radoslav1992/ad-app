@@ -11,6 +11,7 @@ import { isPlatform, platforms, postsAsPhotos, type PlatformId } from "../shared
 import { socialPlatforms, SocialError, failureMessage, nothingPosted, type FailureCode, type MediaFile, type PublishContext, type PublishResult, type Ticket } from "./social";
 import { freshTokens, markExpired, type AccountRow } from "./social/credentials";
 import { postText, synthetic, unfit, type PostRow } from "./social/post";
+import { captionLink } from "./tracking";
 
 // Publishes one publication (claimed by dispatchDue in publishing.ts) on its network, exactly once.
 //
@@ -110,11 +111,17 @@ async function context(env: Env, { pub, post, account, platform }: Loaded): Prom
     });
   }
   if (!files.length) throw new SocialError("NOT_READY");
+  // The post's tracked link where captions make links clickable (YouTube, LinkedIn), when the workspace turned it on.
+  // The same link every time (LinkedIn creates the post while polling); a problem only leaves it out.
+  const link = await captionLink(env, post, platform).catch((e) => {
+    console.warn("Tracked link left out", { publicationId: pub.id, error: (e as Error)?.name });
+    return null;
+  });
   return {
     publicationId: pub.id,
     account: { externalId: account.external_id, handle: account.handle },
     tokens,
-    ...postText(post, platform),
+    ...postText(post, platform, link),
     synthetic: synthetic(post) || aiMedia,
     media: asPhotos ? { kind: "photos", items: files } : { kind: "video", ...files[0], duration: Number(post.duration) || 0 },
     checkpoint: async (ticket: Ticket) => {

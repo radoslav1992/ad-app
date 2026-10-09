@@ -9,6 +9,9 @@ import { allowance } from "./billing";
 import { websiteSchema, scanMessages } from "./scan";
 import { canCreate, checkReferences, createPost } from "./posts";
 import { capabilities, conceptToSpec, feasible, formatPlan, loadCatalog, recentHooks, workspaceProfile, writeConcepts } from "./ideas";
+import { storyToSpec, writeStory } from "./story";
+import { storyStyleIds, type StoryStyle } from "../shared/story";
+import { defaultKit, type CarouselKit } from "../shared/carousel";
 import { formatIds, type FormatId, type Spec } from "../shared/formats";
 import { profileSchema } from "../shared/profile";
 import { settingsSchema, defaultSettings, validZone, type WorkspaceSettings } from "../shared/schedule";
@@ -30,9 +33,9 @@ export function workspaceSettings(w: { settings: string }): WorkspaceSettings {
   const parsed = settingsSchema.safeParse(json(w.settings, {}));
   return parsed.success ? parsed.data : defaultSettings();
 }
-async function ownedImage(env: Env, userId: string, id: string) {
+async function ownedImage(env: Env, userId: string, id: string, message = "Upload the logo as a JPG, PNG or WebP image.") {
   const a = await env.DB.prepare("SELECT id FROM media_assets WHERE id=? AND user_id=? AND status='ready' AND mime LIKE 'image/%'").bind(id, userId).first();
-  if (!a) throw new HTTPException(400, { message: "Upload the logo as a JPG, PNG or WebP image." });
+  if (!a) throw new HTTPException(400, { message });
 }
 
 workspaces.get("/", async (c) => {
@@ -85,6 +88,8 @@ workspaces.patch("/:id", async (c) => {
   // Partial updates are merged into the stored values and validated as a whole.
   const profile = d.profile ? profileSchema.parse({ ...workspaceProfile(w), ...d.profile }) : workspaceProfile(w);
   const settings = d.settings ? settingsSchema.parse({ ...workspaceSettings(w), ...d.settings }) : workspaceSettings(w);
+  // A saved carousel kit only points at the owner's own pictures.
+  for (const id of [settings.carousel?.logoId, settings.carousel?.referenceId]) if (id) await ownedImage(c.env, user.id, id, "Choose one of your own pictures for the carousel kit.");
   if (!validZone(settings.schedule.timezone)) throw new HTTPException(400, { message: "Choose a valid time zone." });
   // Default accounts are kept only while they are connected to this workspace (a stale ID is dropped, not refused).
   if (settings.schedule.accounts.length) {
@@ -133,12 +138,17 @@ workspaces.delete("/:id", async (c) => {
 
 const generateSchema = z.object({
   count: z.number().int().min(1).max(10).default(5),
-  formats: z.array(z.enum(formatIds)).min(1).max(5).optional(),
+  formats: z.array(z.enum(formatIds)).min(1).max(formatIds.length).optional(),
   mention: z.boolean().default(true),
   prompt: z.string().trim().max(400).optional(),
   style: z.enum(writingStyleIds as [string, ...string[]]).optional(),
   pattern: z.string().max(40).optional(),
   useCredits: z.boolean().default(false),
+  /** Narrated videos: seconds of speech, the narrator and the picture style (the writer picks when absent). */
+  story: z.object({
+    seconds: z.number().int().min(10).max(160).default(30), voiceId: z.string().max(40).optional(),
+    style: z.enum(storyStyleIds as [StoryStyle, ...StoryStyle[]]).optional(),
+  }).optional(),
   /** Manual creation: media the owner picked (the writer uses only these). */
   inputs: z.object({
     backgroundLibraryId: z.uuid().optional(), backgroundAssetId: z.uuid().optional(), musicTrackId: z.uuid().optional(),
@@ -146,11 +156,20 @@ const generateSchema = z.object({
   }).default({}),
 });
 type GenerateRequest = z.infer<typeof generateSchema>;
+/** The brand kit new carousels of a workspace start with; a logo or reference picture that is gone is left out. */
+export async function carouselKit(env: Env, userId: string, w: any): Promise<CarouselKit> {
+  const kit = defaultKit({ name: w.name, website: w.website, logoAssetId: w.logo_asset, profile: workspaceProfile(w), settings: workspaceSettings(w) });
+  for (const key of ["logoId", "referenceId"] as const) {
+    const id = kit[key];
+    if (id && !(await env.DB.prepare("SELECT 1 FROM media_assets WHERE id=? AND user_id=? AND status='ready' AND mime LIKE 'image/%'").bind(id, userId).first())) delete kit[key];
+  }
+  return kit;
+}
 /** Writes specs for a workspace (shared by drafts, Blitz batches and automations). */
 export async function writeSpecs(env: Env, user: DbUser, w: any, d: GenerateRequest) {
-  const catalog = await loadCatalog(env, user.id, w.id);
-  const pick = <T extends { id: string }>(list: T[], id?: string) => (id ? list.filter((i) => i.id === id) : list);
   const i = d.inputs;
+  const catalog = await loadCatalog(env, user.id, w.id, [i.backgroundLibraryId, i.backgroundAssetId, i.musicTrackId, i.demoAssetId, i.characterId, i.greenScreenId]);
+  const pick = <T extends { id: string }>(list: T[], id?: string) => (id ? list.filter((i) => i.id === id) : list);
   if (i.backgroundLibraryId) catalog.clips = pick(catalog.clips, i.backgroundLibraryId);
   if (i.backgroundAssetId) { catalog.images = pick(catalog.images, i.backgroundAssetId); catalog.clips = []; }
   if (i.musicTrackId) catalog.music = pick(catalog.music, i.musicTrackId);
@@ -162,16 +181,35 @@ export async function writeSpecs(env: Env, user: DbUser, w: any, d: GenerateRequ
   const { ok, missing } = feasible(requested, catalog, caps, d.useCredits);
   if (!ok.length) throw new HTTPException(400, { message: Object.values(missing)[0] || "These formats can't be made yet." });
   const plan = formatPlan(ok, d.count);
+  // Narrated videos have their own writer (server/story.ts), in parallel with one call for the other formats.
+  const others = plan.filter((f) => f !== "story"), stories = plan.length - others.length;
   const request = {
-    profile: workspaceProfile(w), plan, mention: d.mention, prompt: d.prompt, style: d.style as never, pattern: d.pattern,
+    profile: workspaceProfile(w), plan: others, mention: d.mention, prompt: d.prompt, style: d.style as never, pattern: d.pattern,
     useCredits: d.useCredits, caps, recentHooks: await recentHooks(env, w.id), catalog,
+    ...(plan.includes("carousel") && { kit: await carouselKit(env, user.id, w) }),
   };
-  const concepts = await writeConcepts(env, request);
+  const story = d.story;
+  const [concepts, written] = await Promise.all([
+    others.length ? writeConcepts(env, request) : [],
+    Promise.all(Array.from({ length: stories }, () => writeStory(env, {
+      profile: request.profile, mention: d.mention, prompt: d.prompt, pattern: d.pattern, seconds: story?.seconds ?? 30, style: story?.style,
+      recentHooks: request.recentHooks, music: catalog.music,
+    }))),
+  ]);
   const specs: Spec[] = [];
-  concepts.forEach((k, n) => {
-    const spec = conceptToSpec(k, plan[n], request);
+  let next = 0, nextStory = 0;
+  for (const format of plan) {
+    if (format === "story") {
+      const k = written[nextStory++];
+      const music = k?.music ? catalog.music.find((m) => m.ref === k.music) : undefined;
+      const spec = k && storyToSpec(k, { mention: d.mention, voiceId: story?.voiceId, style: story?.style, music: music ? { trackId: music.id, volume: 0.25 } : null });
+      if (spec) specs.push(spec);
+      continue;
+    }
+    const k = concepts[next++];
+    const spec = k && conceptToSpec(k, format, request);
     if (spec) specs.push(spec);
-  });
+  }
   if (!specs.length) throw new HTTPException(502, { message: "The posts we wrote didn't fit your media. Please try again." });
   return { specs, missing };
 }

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
-  House, Rocket, Lightbulb, Zap, Wand2, UserRound, Clapperboard, Images, CalendarDays, CircleDollarSign, Building2, Share2,
-  Settings, Shield, PanelLeftClose, PanelLeftOpen, Clock, Menu, ChevronDown, Plus, PenSquare, LogOut,
+  House, Rocket, Lightbulb, Zap, Wand2, UserRound, Clapperboard, Images, CalendarDays, BarChart3, CircleDollarSign, Building2, Share2,
+  Settings, Shield, PanelLeftClose, PanelLeftOpen, Clock, Menu, ChevronDown, Plus, PenSquare, LogOut, Scissors,
 } from "lucide-react";
 import { post, timeLeft, useAuth, fileUrl, number } from "../lib";
 import { useWorkspace } from "./workspace";
@@ -78,6 +78,7 @@ export function AppLayout() {
         {item("/app", House, "Home", { end: true })}
         {item("/app/blitz", Rocket, "Blitz")}
         {item("/app/create", PenSquare, "Create")}
+        {item("/app/clips", Scissors, "Clips")}
         {item("/app/inspiration", Lightbulb, "Inspiration")}
         {item("/app/automations", Zap, "Automations", { className: "highlight" })}
         {item("/app/studio", Wand2, "AI Studio")}
@@ -85,6 +86,7 @@ export function AppLayout() {
         {item("/app/content", Clapperboard, "Content", { badge: ready })}
         {item("/app/library", Images, "Library")}
         {item("/app/calendar", CalendarDays, "Calendar")}
+        {item("/app/analytics", BarChart3, "Analytics")}
         <div className="nav-sep" />
         {(free || user.plan === "starter") && item("/app/billing", CircleDollarSign, "Upgrade", { className: "upgrade" })}
         {item("/app/brand", Building2, "Brand", { dot: brandNeedsWork })}

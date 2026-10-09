@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { carouselKitSchema } from "./carousel";
 
 // A workspace's posting rhythm: daily times in its own time zone on chosen weekdays. Approved posts can drop into the
 // next free time automatically (Blitz), or be placed by hand on the calendar.
@@ -26,10 +27,12 @@ export type Automation = z.infer<typeof automationSchema>;
 export const settingsSchema = z.object({
   schedule: scheduleSchema.default(scheduleSchema.parse({})),
   /** Formats Blitz and automations make. */
-  formats: z.array(z.enum(["slideshow", "text", "hook_demo", "green_screen", "ugc"])).min(1).max(5).default(["slideshow", "text"]),
+  formats: z.array(z.enum(["slideshow", "carousel", "text", "hook_demo", "green_screen", "ugc", "story"])).min(1).max(7).default(["slideshow", "text"]),
   automation: automationSchema.default(automationSchema.parse({})),
   /** A small brand mark in the corner of every video (empty: none). */
   watermark: z.string().trim().max(40).default(""),
+  /** The brand kit new carousels start with (null: the profile's colours, the logo and the website as the handle). */
+  carousel: carouselKitSchema.nullable().default(null),
 });
 export type WorkspaceSettings = z.infer<typeof settingsSchema>;
 export const defaultSettings = (): WorkspaceSettings => settingsSchema.parse({});

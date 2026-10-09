@@ -81,7 +81,7 @@ export function PublicLayout() {
     <div className="stage public">
       <a className="skip-link" href="#main">Skip to content</a>
       <header className="pub-header">
-        <div className="wrap pub-nav">
+        <div className="pub-wrap pub-nav">
           <Logo light />
           <nav className="pub-links" aria-label="Main">
             <Link to={features}>Features</Link>
@@ -110,7 +110,7 @@ export function PublicLayout() {
             <span className="sr-only">{open ? "Close menu" : "Menu"}</span>
           </button>
         </div>
-        <nav id={menuId} className="wrap mobile-menu" aria-label="Mobile" hidden={!open}>
+        <nav id={menuId} className="pub-wrap mobile-menu" aria-label="Mobile" hidden={!open}>
           <ul>
             <li><Link to={features} onClick={() => setOpen(false)}>Features</Link></li>
             <li><Link to="/pricing">Pricing</Link></li>
@@ -132,11 +132,11 @@ export function PublicLayout() {
         <Outlet />
       </main>
       <footer className="pub-footer">
-        <div className="wrap">
+        <div className="pub-wrap">
           <div className="foot-grid">
             <div className="foot-brand">
               <Logo light />
-              <p>{PRODUCT.tagline}: posts written and made for your brand, approved by you, published on schedule.</p>
+              <p>{PRODUCT.tagline}. Written and made for your brand, approved by you, published on schedule.</p>
             </div>
             <nav aria-label="Product">
               <h2>Product</h2>

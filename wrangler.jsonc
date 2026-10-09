@@ -6,8 +6,19 @@
   "compatibility_flags": ["nodejs_compat"],
   // Dashboard variables and secrets survive GitHub deploys.
   "keep_vars": true,
-  // Add your production domain here once it is on Cloudflare, e.g.
-  // "routes": [{ "pattern": "example.com", "custom_domain": true }],
+  // Public settings tied to the domain, set on every deploy (a dashboard value for these names is replaced).
+  // Switches, secrets and anything private (ADMIN_EMAILS) stay in the dashboard: this repository is public.
+  "vars": {
+    "SITE_URL": "https://hookstreak.com",
+    "CONTACT_EMAIL": "hello@hookstreak.com",
+  },
+  // hookstreak.com is the public address; the others redirect there (canonicalUrl in server/config.ts).
+  "routes": [
+    { "pattern": "hookstreak.com", "custom_domain": true },
+    { "pattern": "www.hookstreak.com", "custom_domain": true },
+    { "pattern": "hookstreak.app", "custom_domain": true },
+    { "pattern": "www.hookstreak.app", "custom_domain": true },
+  ],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
@@ -16,7 +27,7 @@
   },
   "ai": { "binding": "AI" },
   // Cloudflare Email Sending: add "allowed_sender_addresses": ["hello@your-domain"] when the domain is verified.
-  "send_email": [{ "name": "EMAIL" }],
+  "send_email": [{ "name": "EMAIL", "allowed_sender_addresses": ["hello@hookstreak.com"] }],
   "d1_databases": [
     {
       "binding": "DB",

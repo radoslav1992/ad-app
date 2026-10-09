@@ -1,19 +1,38 @@
 import { z } from "zod";
 import { captionStyles, type CaptionStyle } from "./captions";
 import { textLookSchema, defaultLook } from "./overlay";
-import { CLIP_CREDITS, IMAGE_CREDITS, avatarCredits, speechSeconds, talkingCredits, voiceCredits, type AvatarKind } from "./credits";
+import { CLIP_CREDITS, CLIP_SECONDS, IMAGE_CREDITS, REFERENCE_IMAGE_CREDITS, avatarCredits, speechSeconds, talkingCredits, voiceCredits, type AvatarKind } from "./credits";
+import { brollAssets, brollLibrary, brollPending, brollSchema } from "./broll";
+import {
+  clipPrompt, narrationKey, narrationSchema, scenePrompt, storySceneSchema, storyScript, storyStyleIds, STORY_MAX_CHARS, STORY_MAX_SCENES, type StoryStyle,
+} from "./story";
+import { trackSchema } from "./track";
+import {
+  carouselAspects, carouselCtaSchema, carouselKitSchema, carouselSlideSchema, carouselThemeIds, CAROUSEL_MAX_SLIDES, CAROUSEL_MIN_SLIDES, type CarouselAspect,
+} from "./carousel";
+import { LONG_VIDEO_SECONDS } from "./speech";
 
 // The post formats and the editable description ("spec") of a post. A spec references media by ID (the owner's
 // uploads and website images, the shared library, characters) or asks for AI media with a prompt. The server owns
 // everything under `generated` (voices, avatar videos, word timings): an edit from the browser never sets it.
 
-export const formatIds = ["slideshow", "text", "hook_demo", "green_screen", "ugc"] as const;
+/** The formats the writer makes (Blitz batches, automations, manual drafts). */
+export const formatIds = ["slideshow", "carousel", "text", "hook_demo", "green_screen", "ugc", "story"] as const;
 export type FormatId = (typeof formatIds)[number];
-export const formats: Record<FormatId, { name: string; short: string; description: string; ai: boolean }> = {
+/** Every post format: the written ones, and clips cut from a long video (the Clips page, server/shorts.ts). */
+export const postFormatIds = [...formatIds, "clip"] as const;
+export type PostFormatId = (typeof postFormatIds)[number];
+export const formats: Record<PostFormatId, { name: string; short: string; description: string; ai: boolean }> = {
   slideshow: {
     name: "Slideshow",
     short: "Photo carousel",
     description: "Swipeable photos with bold text. Posts as a TikTok photo post or an Instagram carousel, or as a video.",
+    ai: false,
+  },
+  carousel: {
+    name: "Carousel",
+    short: "Designed slides to swipe",
+    description: "A bold hook, one point per slide and a call to action, in your colours. Posts as an Instagram carousel, a TikTok photo post or a LinkedIn multi-image post.",
     ai: false,
   },
   text: {
@@ -39,6 +58,18 @@ export const formats: Record<FormatId, { name: string; short: string; descriptio
     short: "Talking creator",
     description: "An AI creator talks about your product straight to camera, with word-by-word captions.",
     ai: true,
+  },
+  story: {
+    name: "Narrated Video",
+    short: "Voiceover with pictures",
+    description: "An AI voiceover or your own, with a new picture for every sentence in one style, smooth transitions and big word-by-word subtitles.",
+    ai: true,
+  },
+  clip: {
+    name: "Clip",
+    short: "From a long video",
+    description: "The strongest moment of your podcast, webinar or demo call: framed on the speaker, with animated captions.",
+    ai: false,
   },
 };
 
@@ -93,6 +124,23 @@ const generatedVoice = z.object({
 });
 export type Generated = z.infer<typeof generatedVoice>;
 
+/**
+ * Subtitles from the speech in an uploaded clip (transcribed when it was uploaded, shared/speech.ts): off unless
+ * switched on, and the caption style they use. Posts made before subtitles existed have them off.
+ */
+export const subtitlesSchema = z
+  .object({ enabled: z.boolean().default(false), style: z.enum(captionStyles).default("classic" satisfies CaptionStyle) })
+  .default({ enabled: false, style: "classic" });
+export type Subtitles = z.infer<typeof subtitlesSchema>;
+/**
+ * Instant cuts of a talking clip (shared/cuts.ts): long pauses, and filler sounds with `fillers`, are cut out where the
+ * transcript shows them. Off unless switched on; posts made before cuts existed have none.
+ */
+export const cutsSchema = z
+  .object({ enabled: z.boolean().default(false), fillers: z.boolean().default(true) })
+  .default({ enabled: false, fillers: true });
+export type Cuts = z.infer<typeof cutsSchema>;
+
 export const slideSchema = z.object({ text: screen(300), image: imageRefSchema });
 export const slideshowSpec = z.object({
   format: z.literal("slideshow"),
@@ -109,6 +157,8 @@ export const textSpec = z.object({
   background: backgroundSchema,
   /** Keep the background clip's own sound. */
   clipAudio: z.boolean().default(false),
+  /** Subtitles of the background clip's speech (an own upload, with its sound kept). */
+  subtitles: subtitlesSchema,
   look,
   seconds: z.number().min(4).max(30).default(8),
   music: musicSchema,
@@ -125,6 +175,8 @@ export const ugcSpec = z.object({
   hookLook: textLookSchema.default({ ...defaultLook(), position: "top" }),
   captionStyle: z.enum(captionStyles).default("bold" satisfies CaptionStyle),
   music: musicSchema,
+  /** AI B-roll: shots cut in over chosen sentences while the voice goes on (shared/broll.ts). */
+  broll: brollSchema.optional(),
   generated: generatedVoice.optional(),
   ...common,
 });
@@ -137,9 +189,13 @@ export const hookDemoSpec = z.object({
   /** On-screen hook over the reaction. */
   hook: screen(200).min(1),
   hookClip: hookClipSchema,
-  /** The demo: an uploaded video, from `start` for `seconds`. */
-  demo: z.object({ assetId: uuid, start: z.number().min(0).max(600).default(0), seconds: z.number().min(2).max(45).default(12) }),
+  /** The demo: an uploaded video, from `start` for `seconds` (before cuts). */
+  demo: z.object({ assetId: uuid, start: z.number().min(0).max(LONG_VIDEO_SECONDS).default(0), seconds: z.number().min(2).max(45).default(12) }),
   demoText: screen(200).default(""),
+  /** Subtitles of what is said in the demo (the part of it that is used). */
+  subtitles: subtitlesSchema,
+  /** Pauses (and fillers) cut out of a talking demo. */
+  cuts: cutsSchema,
   look,
   music: musicSchema,
   generated: generatedVoice.optional(),
@@ -158,13 +214,80 @@ export const greenScreenSpec = z.object({
   music: musicSchema,
   ...common,
 });
-export const specSchema = z.discriminatedUnion("format", [slideshowSpec, textSpec, hookDemoSpec, greenScreenSpec, ugcSpec]);
+/** A clip's moment lasts 5–90 seconds of its video (the Clips page suggests 15–60). */
+export const CLIP_MIN_SECONDS = 5, CLIP_MAX_SECONDS = 90;
+/** Seconds the hook title of a clip stays on screen. */
+export const CLIP_TITLE_SECONDS = 3;
+export const clipSpec = z.object({
+  format: z.literal("clip"),
+  /** The moment: seconds `start` to `end` of an uploaded (long) video. */
+  source: z.object({ assetId: uuid, start: z.number().min(0).max(LONG_VIDEO_SECONDS), end: z.number().min(0).max(LONG_VIDEO_SECONDS) })
+    .refine((s) => s.end - s.start >= CLIP_MIN_SECONDS - 0.01 && s.end - s.start <= CLIP_MAX_SECONDS + 0.01, `A clip lasts ${CLIP_MIN_SECONDS} to ${CLIP_MAX_SECONDS} seconds.`),
+  cuts: cutsSchema,
+  /** Keep the speaker in the middle of a wider video (face tracking); off, or no face found: the centre. */
+  follow: z.boolean().default(true),
+  /** Captions of what is said (the video's transcript), in one of the twenty styles. */
+  captions: z.object({ enabled: z.boolean().default(true), style: z.enum(captionStyles).default("bold" satisfies CaptionStyle) }).default({ enabled: true, style: "bold" }),
+  /** On-screen title for the first seconds (optional). */
+  hook: screen(140).default(""),
+  hookLook: textLookSchema.default({ ...defaultLook(), position: "top" }),
+  music: musicSchema,
+  /** Server-owned: where the speaker is in this moment (measured when it is made), for `key` = trackKey. */
+  tracked: z.object({ key: z.string().max(200), track: trackSchema }).optional(),
+  ...common,
+});
+/**
+ * A narrated video (shared/story.ts): the voiceover, its scenes (words, picture, transition) in one picture style with
+ * one recurring subject, and subtitles over the whole voice. `generated` is the AI voice once recorded.
+ */
+export const storySpec = z.object({
+  format: z.literal("story"),
+  narration: narrationSchema,
+  scenes: z.array(storySceneSchema).min(1).max(STORY_MAX_SCENES)
+    .refine((scenes) => storyScript(scenes).length <= STORY_MAX_CHARS * 2, "The script is too long for one video."),
+  style: z.enum(storyStyleIds as [StoryStyle, ...StoryStyle[]]).default("doodle"),
+  /** One description of the recurring subject or character, repeated in every scene's picture prompt. */
+  subject: z.string().trim().max(300).default(""),
+  captions: z.object({ enabled: z.boolean().default(true), style: z.enum(captionStyles).default("keyword" satisfies CaptionStyle) }).default({ enabled: true, style: "keyword" }),
+  music: musicSchema,
+  generated: generatedVoice.optional(),
+  ...common,
+});
+/**
+ * A carousel (shared/carousel.ts): designed picture slides at 4:5 or 1:1, a cover, one point per slide and a call to
+ * action last, in one theme with the post's brand kit. Only pictures: it is never a video.
+ */
+export const carouselSpec = z.object({
+  format: z.literal("carousel"),
+  aspect: z.enum(carouselAspects).default("4:5"),
+  theme: z.enum(carouselThemeIds).default("clean"),
+  /** The cover with a picture: the picture fills it behind the hook ("image"), or sits under it on the page. */
+  cover: z.enum(["image", "page"]).default("image"),
+  slides: z.array(carouselSlideSchema).min(CAROUSEL_MIN_SLIDES).max(CAROUSEL_MAX_SLIDES),
+  cta: carouselCtaSchema.default(carouselCtaSchema.parse({})),
+  brand: carouselKitSchema.default(carouselKitSchema.parse({})),
+  /** "3/7" on every slide but a cover with the swipe cue. */
+  numbers: z.boolean().default(true),
+  /** A "Swipe" cue on the cover. */
+  swipe: z.boolean().default(true),
+  ...common,
+});
+export const specSchema = z.discriminatedUnion("format", [slideshowSpec, carouselSpec, textSpec, hookDemoSpec, greenScreenSpec, ugcSpec, storySpec, clipSpec]);
 export type Spec = z.infer<typeof specSchema>;
 export type SlideshowSpec = z.infer<typeof slideshowSpec>;
+export type CarouselSpec = z.infer<typeof carouselSpec>;
 export type TextSpec = z.infer<typeof textSpec>;
 export type UgcSpec = z.infer<typeof ugcSpec>;
 export type HookDemoSpec = z.infer<typeof hookDemoSpec>;
 export type GreenScreenSpec = z.infer<typeof greenScreenSpec>;
+export type ClipSpec = z.infer<typeof clipSpec>;
+export type StorySpec = z.infer<typeof storySpec>;
+/** The AI voice of a narrated video is recorded for its current words and voice (no new recording is paid). */
+export function narrationCurrent(spec: StorySpec) {
+  return spec.narration.kind === "voice" && !!spec.generated?.voiceAssetId && spec.generated.key === narrationKey(spec.narration.voiceId, storyScript(spec.scenes));
+}
+/** The moment a clip's speaker path was measured for: a new moment needs a new measurement. */
+export const trackKey = (spec: ClipSpec) => `${spec.source.assetId}:${spec.source.start}:${spec.source.end}`;
 
 /** The hook clip of a hook + demo is at most this long; the demo follows it. */
 export const HOOK_CLIP_MAX_SECONDS = 6;
@@ -185,15 +308,40 @@ export function recordingCurrent(spec: Spec) {
   return spec.generated.key === recordingKey(t.characterId, t.voiceId, t.text);
 }
 
+/**
+ * An AI image or clip to make: its asset goes to `key` (default "assetId") of the object at `path`. A clip `from` an
+ * image is made from the asset in that field of the same object (made earlier in the same run); `seconds`: its length.
+ */
+export type PendingMedia = {
+  kind: "image" | "clip"; prompt: string; path: (string | number)[]; key?: string; from?: string; seconds?: 5 | 10;
+  /** An image's shape (default 9:16, the short-form frame), and a reference picture (an asset) whose character it keeps. */
+  aspect?: CarouselAspect; reference?: string;
+};
 /** Every AI image or clip the spec still asks for (a prompt without its asset), with where it goes. */
-export function pendingMedia(spec: Spec): { kind: "image" | "clip"; prompt: string; path: (string | number)[] }[] {
-  const out: { kind: "image" | "clip"; prompt: string; path: (string | number)[] }[] = [];
+export function pendingMedia(spec: Spec): PendingMedia[] {
+  const out: PendingMedia[] = [];
   if (spec.format === "slideshow")
     spec.slides.forEach((s, i) => { if (!s.image.assetId && !s.image.color && s.image.prompt) out.push({ kind: "image", prompt: s.image.prompt, path: ["slides", i, "image"] }); });
+  if (spec.format === "carousel")
+    spec.slides.forEach((s, i) => {
+      if (s.image?.prompt && !s.image.assetId)
+        out.push({ kind: "image", prompt: s.image.prompt, path: ["slides", i, "image"], aspect: spec.aspect, ...(spec.brand.referenceId && { reference: spec.brand.referenceId }) });
+    });
   if (spec.format === "text" && !spec.background.assetId && !spec.background.libraryId && !spec.background.color && spec.background.prompt)
     out.push({ kind: spec.background.clip ? "clip" : "image", prompt: spec.background.prompt, path: ["background"] });
   if (spec.format === "green_screen" && !spec.background.assetId && !spec.background.color && spec.background.prompt)
     out.push({ kind: "image", prompt: spec.background.prompt, path: ["background"] });
+  if (spec.format === "ugc") for (const m of brollPending(spec.broll, spec.script)) out.push({ kind: m.kind, prompt: m.prompt, path: ["broll", "shots", m.index] });
+  if (spec.format === "story") {
+    // Every picture first, then the clips made from them.
+    spec.scenes.forEach((s, i) => {
+      if ((s.source === "image" || s.source === "clip") && !s.imageId)
+        out.push({ kind: "image", prompt: scenePrompt(s.description, spec.subject, spec.style), path: ["scenes", i], key: "imageId" });
+    });
+    spec.scenes.forEach((s, i) => {
+      if (s.source === "clip" && !s.clipId) out.push({ kind: "clip", prompt: clipPrompt(s.description), path: ["scenes", i], key: "clipId", from: "imageId", seconds: s.clipSeconds });
+    });
+  }
   return out;
 }
 /**
@@ -201,9 +349,10 @@ export function pendingMedia(spec: Spec): { kind: "image" | "clip"; prompt: stri
  * current words. `characterKind` tells library characters from people's own (they cost more per second).
  */
 export function specCredits(spec: Spec, characterKind: AvatarKind = "library") {
-  let credits = pendingMedia(spec).reduce((n, m) => n + (m.kind === "clip" ? CLIP_CREDITS : IMAGE_CREDITS), 0);
+  let credits = pendingMedia(spec).reduce((n, m) => n + (m.kind === "clip" ? CLIP_CREDITS * ((m.seconds ?? CLIP_SECONDS) / CLIP_SECONDS) : m.reference ? REFERENCE_IMAGE_CREDITS : IMAGE_CREDITS), 0);
   const t = talking(spec);
   if (t && !recordingCurrent(spec)) credits += talkingCredits(t.text, characterKind);
+  if (spec.format === "story" && spec.narration.kind === "voice" && !narrationCurrent(spec)) credits += voiceCredits(storyScript(spec.scenes));
   return credits;
 }
 export { voiceCredits, avatarCredits, speechSeconds };
@@ -212,32 +361,47 @@ export { voiceCredits, avatarCredits, speechSeconds };
 export function estimatedSeconds(spec: Spec) {
   switch (spec.format) {
     case "slideshow": return spec.slides.length * spec.secondsPerSlide;
+    case "carousel": return 0;
     case "text": case "green_screen": return spec.seconds;
     case "ugc": return speechSeconds(spec.script) + 0.5;
     case "hook_demo": return Math.min(HOOK_CLIP_MAX_SECONDS, "line" in spec.hookClip ? speechSeconds(spec.hookClip.line) : 3) + spec.demo.seconds;
+    case "clip": return spec.source.end - spec.source.start;
+    case "story": return narrationCurrent(spec) && spec.generated?.words.length ? spec.generated.words.at(-1)!.end + 0.3 : speechSeconds(storyScript(spec.scenes)) + 0.5;
   }
 }
 /** All of the owner's media asset IDs a spec references, for ownership checks. */
 export function referencedAssets(spec: Spec): string[] {
   const ids: (string | undefined)[] = [];
   if (spec.format === "slideshow") ids.push(...spec.slides.map((s) => s.image.assetId));
+  if (spec.format === "carousel") ids.push(...spec.slides.map((s) => s.image?.assetId), spec.brand.logoId, spec.brand.referenceId);
   if (spec.format === "text" || spec.format === "green_screen") ids.push(spec.background.assetId);
   if (spec.format === "hook_demo") ids.push(spec.demo.assetId);
-  if (spec.music?.assetId) ids.push(spec.music.assetId);
+  if (spec.format === "ugc") ids.push(...brollAssets(spec.broll));
+  if (spec.format === "clip") ids.push(spec.source.assetId);
+  if (spec.format === "story") {
+    if (spec.narration.kind === "upload") ids.push(spec.narration.assetId);
+    for (const s of spec.scenes) ids.push(s.imageId, s.clipId, s.assetId);
+  }
+  if ("music" in spec && spec.music?.assetId) ids.push(spec.music.assetId);
   return [...new Set(ids.filter((x): x is string => !!x))];
 }
 /** Library items a spec references. */
 export function referencedLibrary(spec: Spec): string[] {
-  const ids: (string | undefined)[] = [spec.music?.trackId];
+  const ids: (string | undefined)[] = ["music" in spec ? spec.music?.trackId : undefined];
   if (spec.format === "text") ids.push(spec.background.libraryId);
   if (spec.format === "hook_demo" && "libraryId" in spec.hookClip) ids.push(spec.hookClip.libraryId);
   if (spec.format === "green_screen") ids.push(spec.clipId);
+  if (spec.format === "ugc") ids.push(...brollLibrary(spec.broll));
+  if (spec.format === "story") ids.push(...spec.scenes.map((s) => s.libraryId));
   return [...new Set(ids.filter((x): x is string => !!x))];
 }
 /** The hook shown in lists and on the swipe card. */
 export function specHook(spec: Spec) {
   if (spec.format === "slideshow") return spec.slides[0]?.text || "";
+  if (spec.format === "carousel") return spec.slides[0]?.title || spec.slides[0]?.body || spec.topic || "";
   if (spec.format === "ugc") return spec.hook || spec.script.split(/(?<=[.!?])\s/)[0] || "";
+  if (spec.format === "clip") return spec.hook || spec.topic || "Clip";
+  if (spec.format === "story") return storyScript(spec.scenes).split(/(?<=[.!?])\s/)[0] || spec.topic || "";
   if (spec.format === "text" || spec.format === "green_screen") return spec.text.split("\n")[0];
   return spec.hook;
 }

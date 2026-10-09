@@ -3,7 +3,8 @@ import type { PlanId } from "../shared/plans";
 import type { Onboarding } from "../shared/onboarding";
 import type { Profile } from "../shared/profile";
 import type { WorkspaceSettings } from "../shared/schedule";
-import type { FormatId, Spec } from "../shared/formats";
+import type { PostFormatId, Spec } from "../shared/formats";
+import type { SpeechStatus } from "../shared/speech";
 
 // The app's API client, signed-in state and shared types. Every request goes to /api on this site.
 
@@ -11,6 +12,8 @@ export type User = {
   id: string; name: string; email: string; verified: boolean; admin: boolean; onboarding: Onboarding;
   plan: PlanId; used: number; limit: number; postsUsed: number; postsLimit: number;
   trialEndsAt: number | null; trialEnded: boolean; periodEnd: number | null; hasSubscription: boolean; paymentIssue: boolean;
+  /** The plan is an administrator's free month (until periodEnd), not a paid subscription. */
+  granted?: boolean;
 };
 export type Workspace = {
   id: string; name: string; website: string | null; description: string | null; logoAssetId: string | null;
@@ -18,15 +21,19 @@ export type Workspace = {
   scan: { status: "idle" | "scanning" | "ready" | "failed"; step: string | null; error: string | null; at: number | null };
 };
 export type Post = {
-  id: string; workspaceId: string; format: FormatId; status: "pending" | "approved" | "rejected";
+  id: string; workspaceId: string; format: PostFormatId; status: "pending" | "approved" | "rejected";
   renderStatus: "queued" | "running" | "ready" | "failed"; renderError: string | null; phase: string | null;
   hook: string; caption: string; title: string; hashtags: string[]; topic: string; why: string; pattern: string | null;
   duration: number; videoAssetId: string | null; coverAssetId: string | null; slides: string[]; revision: number;
   createdAt: number; updatedAt: number; reviewedAt: number | null; spec?: Spec;
+  /** Carousels: the shape of their slides. */
+  aspect?: "4:5" | "1:1";
 };
 export type Asset = {
   id: string; kind: string; name: string; mime: string; bytes: number; duration: number; width: number; height: number;
   status: "uploading" | "checking" | "ready" | "failed"; workspaceId: string | null; hasAudio: boolean | null; error: string | null; createdAt: number; url: string;
+  /** Speech found in an own video or track (null: never looked for), and the language it was heard in. */
+  speech?: SpeechStatus | null; speechLanguage?: string | null;
 };
 export type LibraryItem = { id: string; kind: "music" | "clip" | "greenscreen"; name: string; tags: string[]; duration: number; width: number; height: number; url: string; thumb: string | null };
 export type Character = { id: string; name: string; description: string; gender: string; own: boolean; premium: boolean; image: string };

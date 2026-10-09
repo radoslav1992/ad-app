@@ -62,7 +62,7 @@ const questions: { q: string; a: ReactNode }[] = [
     q: "What are AI credits for?",
     a: (
       <p>
-        The AI extras: AI images, AI video backgrounds, AI voices and talking AI creators. The table above shows what each costs. Automations only spend
+        The AI extras: AI images, AI video clips, AI voices and talking AI creators. The table above shows what each costs. Automations only spend
         credits if you allow them to.
       </p>
     ),
@@ -99,7 +99,7 @@ export function Pricing() {
   const { config } = usePublicConfig();
   return (
     <>
-      <div className="wrap">
+      <div className="pub-wrap">
         <header className="pub-head center">
           <span className="kicker">Pricing</span>
           <h1>Plans for every posting pace</h1>
@@ -118,7 +118,7 @@ export function Pricing() {
       </div>
 
       <section className="pub-section tight" aria-labelledby="includes-title">
-        <div className="wrap split">
+        <div className="pub-wrap split">
           <div className="copy">
             <span className="kicker">In every plan</span>
             <h2 className="title" id="includes-title">Every plan includes</h2>
@@ -135,7 +135,7 @@ export function Pricing() {
       </section>
 
       <section className="pub-section tight" aria-labelledby="compare-title">
-        <div className="wrap">
+        <div className="pub-wrap">
           <div className="pub-section-head">
             <span className="kicker">Compare</span>
             <h2 className="title" id="compare-title">Plans side by side</h2>
@@ -162,7 +162,7 @@ export function Pricing() {
       </section>
 
       <section className="pub-section tight" aria-labelledby="credits-title">
-        <div className="wrap">
+        <div className="pub-wrap">
           <div className="pub-section-head">
             <span className="kicker">AI credits</span>
             <h2 className="title" id="credits-title">What AI work costs</h2>
@@ -190,7 +190,7 @@ export function Pricing() {
       </section>
 
       <section className="pub-section tight" aria-labelledby="pricing-faq-title">
-        <div className="wrap">
+        <div className="pub-wrap">
           <div className="pub-section-head center">
             <span className="kicker">FAQ</span>
             <h2 className="title" id="pricing-faq-title">Posts, credits and the trial</h2>

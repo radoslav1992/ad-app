@@ -20,9 +20,11 @@ const AppLayout = named(() => import("./app/Layout"), "AppLayout");
 const Home = named(() => import("./app/Home"), "Home");
 const Blitz = named(() => import("./app/Blitz"), "Blitz");
 const Create = named(() => import("./app/Create"), "Create");
+const Clips = named(() => import("./app/Clips"), "ClipsPage");
 const Content = named(() => import("./app/Content"), "Content");
 const Library = named(() => import("./app/Library"), "LibraryPage");
 const Calendar = named(() => import("./app/Calendar"), "CalendarPage");
+const Analytics = named(() => import("./app/Analytics"), "AnalyticsPage");
 const Accounts = named(() => import("./app/Accounts"), "AccountsPage");
 const Studio = named(() => import("./app/Studio"), "StudioPage");
 const Characters = named(() => import("./app/Characters"), "CharactersPage");
@@ -130,9 +132,11 @@ export function App() {
             <Route index element={<Home />} />
             <Route path="blitz" element={<Blitz />} />
             <Route path="create" element={<Create />} />
+            <Route path="clips" element={<Clips />} />
             <Route path="content" element={<Content />} />
             <Route path="library" element={<Library />} />
             <Route path="calendar" element={<Calendar />} />
+            <Route path="analytics" element={<Analytics />} />
             <Route path="accounts" element={<Accounts />} />
             <Route path="studio" element={<Studio />} />
             <Route path="characters" element={<Characters />} />

@@ -9,23 +9,32 @@ import { safeEqual, token } from "./security";
 import { extOf, head, imageInfo, mediaKey, serveObject, storedDuration, storeStream } from "./storage";
 import { fetchOutput } from "./providers/http";
 import { falResult, falStatus, submitFal, type FalTicket } from "./providers/fal";
-import { speak } from "./providers/elevenlabs";
+import { forcedAlignment, speak } from "./providers/elevenlabs";
 import { avatarVideoStatus, deleteAvatarVideo, submitAvatarVideo, type HeyGenTicket } from "./providers/heygen";
 import { releaseRender, renderFailures, renderFile, renderStatus, submitRender } from "./renderer";
-import { planRender, type Media, type PlanContext } from "./render-plan";
+import { planCarousel, planRender, type Media, type Plan, type PlanContext, type StillsPlan } from "./render-plan";
 import { failAsset } from "./media";
+import { claimSpeech, mayHaveSpeech, storedTranscript, transcribe } from "./speech";
+import { SPEECH_MAX_SECONDS } from "../shared/speech";
 import { workspaceSettings } from "./workspaces";
 import { workspaceProfile } from "./ideas";
+import { withBrollVoice } from "./broll";
+import { narrationContext } from "./story";
 import {
-  pendingMedia, recordingCurrent, recordingKey, referencedAssets, referencedLibrary, specSchema, talking, type Spec,
+  narrationCurrent, pendingMedia, recordingCurrent, recordingKey, referencedAssets, referencedLibrary, specSchema, talking, trackKey,
+  type ClipSpec, type PendingMedia, type Spec, type StorySpec,
 } from "../shared/formats";
+import { narrationKey, storyScript, textWords } from "../shared/story";
+import { trackSchema, type Track } from "../shared/track";
 import type { RenderPayload, RenderStatus } from "../shared/render";
 import { IMAGE_CREDITS } from "../shared/credits";
 
-// A run makes a post ready: AI images/clips it asks for, the talking creator (voice, then lip-synced video), then the
-// render (video, cover and, for slideshows, the slides as pictures). Paid provider calls are made once: a claim is
-// stored before each call and its ticket right after, so a retried step polls the existing job instead of paying
-// again; a claim without a ticket (the answer was lost) fails the run and refunds the credits.
+// A run makes a post ready: AI images/clips it asks for, the talking creator (voice, then lip-synced video), where a
+// clip's speaker is, then the render (video, cover and, for slideshows, the slides as pictures; a carousel is only
+// its slides, the first one being the cover). A run of kind
+// "speech" transcribes a long video for credits. Paid provider calls are made once: a claim is stored before each
+// call and its ticket right after, so a retried step polls the existing job instead of paying again; a claim without
+// a ticket (the answer was lost) fails the run and refunds the credits.
 
 type RunState = {
   token?: string;
@@ -99,6 +108,7 @@ export class ContentGeneration extends WorkflowEntrypoint<Env, { runId?: string;
     const phase = (value: string) => e.DB.prepare("UPDATE runs SET phase=?,updated_at=? WHERE id=?").bind(value, now(), id).run();
     try {
       if (run.kind === "post") await makePost(e, step, run, phase);
+      else if (run.kind === "speech") await findSpeech(e, step, String(run.payload.assetId), true);
       else await makeStandalone(e, step, run, phase);
       await step.do("complete", async () => {
         await e.DB.prepare("UPDATE runs SET status='completed',phase='done',updated_at=? WHERE id=? AND status='running'").bind(now(), id).run();
@@ -119,15 +129,21 @@ export class ContentGeneration extends WorkflowEntrypoint<Env, { runId?: string;
 type Phase = (value: string) => Promise<unknown>;
 type RunInfo = { id: string; user_id: string; post_id: string | null; kind: string; payload: any };
 
-/** One AI image or clip, paid once; returns the stored asset's ID. */
-async function generateMedia(e: Env, step: WorkflowStep, run: RunInfo, name: string, kind: "image" | "clip", prompt: string, owner: { workspaceId: string | null; postId: string | null; assetKind: "ai_image" | "ai_clip" | "portrait"; label: string }, phase: Phase) {
+/**
+ * One AI image or clip, paid once; returns the stored asset's ID. A clip `from` a picture gets that picture's
+ * capability link (read when it is submitted) and is `seconds` long; an image has an `aspect`, and keeps the
+ * character of a `reference` picture (its capability link, read when it is submitted).
+ */
+async function generateMedia(e: Env, step: WorkflowStep, run: RunInfo, name: string, kind: "image" | "clip", prompt: string, owner: { workspaceId: string | null; postId: string | null; assetKind: "ai_image" | "ai_clip" | "portrait"; label: string }, phase: Phase, clip: { from?: () => Promise<string>; seconds?: number; aspect?: PendingMedia["aspect"]; reference?: () => Promise<string> } = {}) {
   const ticket = await step.do(`${name}-submit`, once, async () => {
     const s = await readState(e, run.id);
     if (s.tickets?.[name]) return s.tickets[name] as FalTicket;
     if (s.claims?.[name]) throw new Error("GENERATION_UNCERTAIN");
+    const image = clip.from ? await clip.from() : undefined;
+    const reference = clip.reference ? await clip.reference() : undefined;
     await patchState(e, run.id, (s) => { (s.claims ||= {})[name] = true; });
     await phase(kind === "clip" ? "clip" : "images");
-    const t = await submitFal(e, kind, prompt);
+    const t = await submitFal(e, kind, prompt, { image, seconds: clip.seconds, aspect: clip.aspect, reference });
     await patchState(e, run.id, (s) => { (s.tickets ||= {})[name] = t; });
     return t;
   });
@@ -181,26 +197,35 @@ async function loadSpec(e: Env, postId: string): Promise<{ spec: Spec; workspace
 async function makePost(e: Env, step: WorkflowStep, run: RunInfo, phase: Phase) {
   const postId = run.post_id!;
   const { spec: first, workspace } = await step.do("spec", () => loadSpec(e, postId));
-  // AI pictures and clips the spec asks for.
+  // AI pictures and clips the spec asks for (a narrated video's clips are made from its pictures, made first).
   const pending = pendingMedia(first);
   for (let i = 0; i < pending.length; i++) {
     const m = pending[i];
     const assetId = await generateMedia(e, step, run, `ai-${i}`, m.kind, m.prompt, {
       workspaceId: workspace.id, postId, assetKind: m.kind === "clip" ? "ai_clip" : "ai_image", label: `AI ${m.kind}: ${m.prompt}`,
-    }, phase);
+    }, phase, {
+      seconds: m.seconds, aspect: m.aspect, from: m.from ? () => sourcePicture(e, run, postId, m) : undefined,
+      reference: m.reference ? () => ownImage(e, run, m.reference!) : undefined,
+    });
     await step.do(`ai-${i}-apply`, async () => updateSpec(e, postId, (spec) => {
       let target = spec;
       for (const part of m.path) target = target[part];
-      target.assetId = assetId;
+      target[m.key || "assetId"] = assetId;
     }));
   }
   // The talking creator: voice, then the lip-synced video.
   const t = talking(first);
   if (t && !recordingCurrent(first)) await makeRecording(e, step, run, t, workspace, phase);
+  // A narrated video's AI voice, after the pictures (a refused picture stops the run before the voice is paid for).
+  if (first.format === "story" && first.narration.kind === "voice" && !narrationCurrent(first)) await makeNarration(e, step, run, first, workspace, phase);
+  // A clip follows its speaker: where they are in its moment is measured once and kept with the post.
+  if (first.format === "clip" && first.follow && first.tracked?.key !== trackKey(first)) await trackMoment(e, step, run, first, phase);
   // The render.
   const { spec } = await step.do("spec-final", () => loadSpec(e, postId));
-  const ctx = await step.do("resolve", () => resolveContext(e, run.user_id, spec, workspace));
-  const plan = planRender(spec, ctx);
+  // With AI B-roll the voice is its own track under the cut-aways (server/broll.ts).
+  const ctx = await step.do("resolve", async () => withBrollVoice(e, run.user_id, spec, await resolveContext(e, run.user_id, spec, workspace)));
+  // A carousel is only pictures (its stills); everything else is a video, and slideshows have stills too.
+  const plan: { compose: Plan["compose"] | null; stills: StillsPlan | null } = spec.format === "carousel" ? { compose: null, stills: planCarousel(spec, ctx) } : planRender(spec, ctx);
   const outputs: Record<string, RenderStatus> = {};
   for (const job of ["compose", "stills"] as const) {
     const part = job === "compose" ? plan.compose : plan.stills;
@@ -215,17 +240,18 @@ async function makePost(e: Env, step: WorkflowStep, run: RunInfo, phase: Phase) 
     const store = async (name: string, job: "compose" | "stills", n: number, mime: string, kind: "render" | "slide", label: string, duration = 0) => {
       if (saved[name] && await e.DB.prepare("SELECT 1 FROM media_assets WHERE id=?").bind(saved[name]).first()) return saved[name];
       const assetId = uid(), key = mediaKey(run.user_id, assetId, extOf(mime));
+      const part = job === "compose" ? plan.compose! : plan.stills!;
       const bytes = await storeStream(e, key, await renderFile(e, s.slots![job], s.jobs![job], n), mime === "video/mp4" ? 400 * MB : 20 * MB, mime);
       await e.DB.prepare(
-        "INSERT INTO media_assets(id,user_id,workspace_id,post_id,kind,name,object_key,mime,bytes,duration,width,height,status,meta,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,1080,1920,'ready',?,?,?)",
-      ).bind(assetId, run.user_id, workspace.id, postId, kind, label, key, mime, bytes, duration, (job === "compose" ? plan.compose.synthetic : !!plan.stills?.synthetic) ? '{"ai":true}' : "{}", now(), now()).run();
+        "INSERT INTO media_assets(id,user_id,workspace_id,post_id,kind,name,object_key,mime,bytes,duration,width,height,status,meta,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'ready',?,?,?)",
+      ).bind(assetId, run.user_id, workspace.id, postId, kind, label, key, mime, bytes, duration, part.width, part.height, part.synthetic ? '{"ai":true}' : "{}", now(), now()).run();
       await patchState(e, run.id, (st) => { (st.assets ||= {})[name] = assetId; });
       saved[name] = assetId;
       return assetId;
     };
-    const duration = outputs.compose.duration || 0;
-    const video = await store("video", "compose", 0, "video/mp4", "render", "Post video", duration);
-    const cover = (outputs.compose.files || 1) > 1 ? await store("cover", "compose", 1, "image/jpeg", "slide", "Post cover") : null;
+    const duration = outputs.compose?.duration || 0;
+    const video = outputs.compose ? await store("video", "compose", 0, "video/mp4", "render", "Post video", duration) : null;
+    const cover = outputs.compose && (outputs.compose.files || 1) > 1 ? await store("cover", "compose", 1, "image/jpeg", "slide", "Post cover") : null;
     const slides: string[] = [];
     if (outputs.stills) for (let n = 0; n < (outputs.stills.files || 0); n++) slides.push(await store(`slide-${n}`, "stills", n, "image/jpeg", "slide", `Slide ${n + 1}`));
     // Files of earlier versions of this post that the new one no longer uses are deleted (R2 cleanup follows).
@@ -234,8 +260,9 @@ async function makePost(e: Env, step: WorkflowStep, run: RunInfo, phase: Phase) 
     const owned = (await e.DB.prepare("SELECT id FROM media_assets WHERE post_id=?").bind(postId).all<{ id: string }>()).results;
     const stale = owned.map((r) => r.id).filter((x) => !keep.has(x));
     await e.DB.batch([
+      // A carousel's cover is its first slide.
       e.DB.prepare("UPDATE posts SET video_asset=?,cover_asset=?,slides=?,duration=?,render_status='ready',render_error=NULL,updated_at=? WHERE id=?")
-        .bind(video, cover, JSON.stringify(slides), duration, now(), postId),
+        .bind(video, cover ?? (plan.compose ? null : slides[0] ?? null), JSON.stringify(slides), duration, now(), postId),
       ...stale.map((x) => e.DB.prepare("DELETE FROM media_assets WHERE id=?").bind(x)),
     ]);
   });
@@ -305,14 +332,104 @@ async function makeRecording(e: Env, step: WorkflowStep, run: RunInfo, t: { char
   }));
 }
 
+/** The capability link of one of the owner's ready images (a reference character for AI pictures). */
+async function ownImage(e: Env, run: RunInfo, assetId: string) {
+  const a = await e.DB.prepare("SELECT object_key FROM media_assets WHERE id=? AND user_id=? AND status='ready' AND mime LIKE 'image/%'").bind(assetId, run.user_id).first<{ object_key: string }>();
+  if (!a) throw new Error("MEDIA_INPUT");
+  return inputUrl(e, run.id, a.object_key);
+}
+/** The capability link of the picture a clip is made from: the asset in field `from` next to where the clip goes. */
+async function sourcePicture(e: Env, run: RunInfo, postId: string, m: PendingMedia) {
+  const row = await e.DB.prepare("SELECT spec FROM posts WHERE id=?").bind(postId).first<{ spec: string }>();
+  let target = json<any>(row?.spec, null);
+  for (const part of m.path) target = target?.[part];
+  const id = target?.[m.from!];
+  const a = typeof id === "string" && await e.DB.prepare("SELECT object_key FROM media_assets WHERE id=? AND user_id=? AND status='ready'").bind(id, run.user_id).first<{ object_key: string }>();
+  if (!a) throw new Error("GENERATION_FAILED");
+  return inputUrl(e, run.id, a.object_key);
+}
+
+/**
+ * A narrated video's AI voice, paid once, timed by the words as written. Timings that are missing, or that do not
+ * match the script word for word, are asked of forced alignment (rech-bg's fallback); its failure never costs the
+ * paid voice: the render then spreads the scenes over it without subtitles.
+ */
+async function makeNarration(e: Env, step: WorkflowStep, run: RunInfo, spec: StorySpec, workspace: any, phase: Phase) {
+  if (spec.narration.kind !== "voice") return;
+  const voiceId = spec.narration.voiceId, script = storyScript(spec.scenes);
+  const voice = await step.do("narration", once, async () => {
+    const s = await readState(e, run.id);
+    if (s.assets?.voice && s.tickets?.words) return { assetId: s.assets.voice, seconds: Number(s.tickets.voiceSeconds) || 0, words: s.tickets.words as any[] };
+    if (s.claims?.voice) throw new Error("VOICE_FAILED");
+    await patchState(e, run.id, (s) => { (s.claims ||= {}).voice = true; });
+    await phase("voice");
+    const result = await speak(e, voiceId, script, workspaceProfile(workspace).language || "en", "original");
+    const assetId = uid(), key = mediaKey(run.user_id, assetId, "wav");
+    await e.MEDIA.put(key, result.audio, { httpMetadata: { contentType: "audio/wav" } });
+    await e.DB.prepare(
+      "INSERT INTO media_assets(id,user_id,workspace_id,post_id,kind,name,object_key,mime,bytes,duration,status,meta,created_at,updated_at) VALUES (?,?,?,?,'voice','Voiceover',?,'audio/wav',?,?,'ready','{\"ai\":true}',?,?)",
+    ).bind(assetId, run.user_id, workspace.id, run.post_id, key, result.audio.length, result.seconds, now(), now()).run();
+    await patchState(e, run.id, (s) => { (s.assets ||= {}).voice = assetId; (s.tickets ||= {}).words = result.words; s.tickets.voiceSeconds = result.seconds; });
+    return { assetId, seconds: result.seconds, words: result.words };
+  });
+  const words = await step.do("narration-timing", { retries: { limit: 0, delay: "1 second" }, timeout: "3 minutes" }, async () => {
+    if (voice.words.length === textWords(script).length) return voice.words;
+    try {
+      const key = (await e.DB.prepare("SELECT object_key FROM media_assets WHERE id=?").bind(voice.assetId).first<{ object_key: string }>())?.object_key;
+      const wav = key && await e.MEDIA.get(key);
+      if (!wav) return voice.words;
+      return await forcedAlignment(e, new Blob([await wav.arrayBuffer()], { type: "audio/wav" }), script, voice.seconds);
+    } catch (error) {
+      console.warn("Narration timing unavailable", { runId: run.id, code: error instanceof Error && /^[A-Z_]{3,40}$/.test(error.message) ? error.message : "INTERNAL" });
+      return voice.words;
+    }
+  });
+  await step.do("narration-apply", () => updateSpec(e, run.post_id!, (s) => {
+    s.generated = { key: narrationKey(voiceId, script), voiceAssetId: voice.assetId, words };
+  }));
+}
+
+/**
+ * "Follow the speaker" for a clip: the renderer finds the main face in the clip's moment (free). The path is kept
+ * with the post (`tracked`); a failure only leaves the picture centred, and the next render tries again.
+ */
+async function trackMoment(e: Env, step: WorkflowStep, run: RunInfo, spec: ClipSpec, phase: Phase) {
+  const source = await step.do("track-source", async () =>
+    e.DB.prepare("SELECT object_key,width,height,duration FROM media_assets WHERE id=? AND user_id=? AND status='ready'").bind(spec.source.assetId, run.user_id).first<any>());
+  if (!source) throw new Error("MEDIA_INPUT");
+  let track: Track | null = { v: 1, points: [] };
+  // A video no wider than the 9:16 frame is never cropped: there is nobody to follow.
+  if (source.width > (source.height * 9) / 16 * 1.01) {
+    const payload = await step.do("track-payload", async (): Promise<RenderPayload> => {
+      const start = Math.min(spec.source.start, Math.max(0, source.duration - 1));
+      return { id: uid(), operation: "track", url: await inputUrl(e, run.id, source.object_key), start, length: Math.max(1, Math.min(spec.source.end, source.duration) - start) };
+    });
+    try {
+      await phase("tracking");
+      const { slot, result } = await rendererJob(e, step, "track", payload, 120, "8 seconds");
+      await step.do("track-release", () => releaseRender(e, slot, payload.id));
+      const parsed = trackSchema.safeParse(result.track);
+      track = parsed.success ? parsed.data : null;
+    } catch (error) {
+      console.warn("Speaker not tracked", { runId: run.id, code: error instanceof Error && /^[A-Z_]{3,40}$/.test(error.message) ? error.message : "INTERNAL" });
+      track = null;
+    }
+  }
+  if (track) await step.do("track-apply", () => updateSpec(e, run.post_id!, (s) => { s.tracked = { key: trackKey(spec), track }; }));
+}
+
 /** Every file the render reads, resolved to its R2 key and length (owner's files, library items, the recording). */
 async function resolveContext(e: Env, userId: string, spec: Spec, workspace: any): Promise<PlanContext> {
   const media: Record<string, Media> = {};
   const assets = referencedAssets(spec);
+  // Own videos bring the words heard in them (subtitles, captions and cuts).
   if (assets.length)
-    for (const a of (await e.DB.prepare(`SELECT id,object_key,mime,duration,kind FROM media_assets WHERE user_id=? AND status='ready' AND id IN (${assets.map(() => "?").join(",")})`)
+    for (const a of (await e.DB.prepare(`SELECT id,object_key,mime,duration,width,height,kind,meta FROM media_assets WHERE user_id=? AND status='ready' AND id IN (${assets.map(() => "?").join(",")})`)
       .bind(userId, ...assets).all<any>()).results)
-      media[a.id] = { key: a.object_key, kind: a.mime.split("/")[0], duration: a.duration, ai: ["ai_image", "ai_clip", "avatar", "portrait"].includes(a.kind) };
+      media[a.id] = {
+        key: a.object_key, kind: a.mime.split("/")[0], duration: a.duration, width: a.width, height: a.height, ai: ["ai_image", "ai_clip", "avatar", "portrait"].includes(a.kind),
+        ...(a.mime.startsWith("video/") && { words: storedTranscript(a.meta)?.words }),
+      };
   const items = referencedLibrary(spec);
   if (items.length)
     for (const l of (await e.DB.prepare(`SELECT id,object_key,mime,duration,tags FROM library_items WHERE id IN (${items.map(() => "?").join(",")})`).bind(...items).all<any>()).results)
@@ -324,8 +441,9 @@ async function resolveContext(e: Env, userId: string, spec: Spec, workspace: any
     if (!a) throw new Error("MEDIA_INPUT");
     avatar = { key: a.object_key, duration: a.duration, words: spec.generated.words };
   }
+  const narration = spec.format === "story" ? await narrationContext(e, userId, spec) : undefined;
   const profile = workspaceProfile(workspace);
-  return { media, avatar, accent: profile.colors.primary, watermark: workspaceSettings(workspace).watermark };
+  return { media, avatar, narration, accent: profile.colors.primary, watermark: workspaceSettings(workspace).watermark };
 }
 
 /** Submits a render job (to a free container), waits for it and returns its final status. */
@@ -374,44 +492,118 @@ async function makeStandalone(e: Env, step: WorkflowStep, run: RunInfo, phase: P
 }
 export const CHARACTER_CREDITS = IMAGE_CREDITS;
 
-/** Checks an uploaded video or track with the renderer (length, picture size, sound) before it can be used. */
+/** Waits for a renderer job (on a free container) and returns its final status and the slot that holds it. */
+async function rendererJob(e: Env, step: WorkflowStep, name: string, payload: RenderPayload, rounds: number, wait: "4 seconds" | "8 seconds") {
+  let slot: number | null = null, result: RenderStatus | null = null;
+  for (let i = 0; i < rounds && !result; i++) {
+    const r = await step.do(`${name}-${i}`, { retries: { limit: 2, delay: "10 seconds" }, timeout: "2 minutes" }, async () => {
+      if (slot === null) {
+        const accepted = await submitRender(e, payload, null, async () => {});
+        if (accepted === null) return { slot: null, status: { status: "running" } as RenderStatus };
+        return { slot: accepted, status: await renderStatus(e, accepted, payload.id) };
+      }
+      return { slot, status: await renderStatus(e, slot, payload.id) };
+    });
+    slot = r.slot;
+    if (r.status.status === "completed") result = r.status;
+    else if (r.status.status === "failed") throw new Error(r.status.error || "MEDIA_FORMAT");
+    else await step.sleep(`${name}-wait-${i}`, wait);
+  }
+  if (!result || slot === null) throw new Error("MEDIA_TIMEOUT");
+  return { slot, result };
+}
+
+/**
+ * Checks an uploaded video or track with the renderer (length, picture size, sound) before it can be used, then
+ * looks for speech in it. A ready file with speech pending ("Find speech") only has its speech looked for.
+ */
 async function inspectUpload(e: Env, step: WorkflowStep, assetId: string) {
-  const asset = await step.do("load", async () => e.DB.prepare("SELECT id,mime,meta,status FROM media_assets WHERE id=? AND status='checking'").bind(assetId).first<any>());
+  const asset = await step.do("load", async () => e.DB.prepare("SELECT id,user_id,kind,mime,meta,status,duration FROM media_assets WHERE id=? AND status IN ('checking','ready')").bind(assetId).first<any>());
   if (!asset) return;
+  if (asset.status === "ready") return findSpeech(e, step, asset.id);
   const meta = json<any>(asset.meta, {});
-  const payload: RenderPayload = { id: asset.id, operation: "inspect", url: `${siteUrl(e)}/api/upload-inputs/${asset.id}?token=${meta.token}` };
+  // Videos as long as the plan allowed when they were uploaded (long videos on paid plans), tracks up to 10 minutes.
+  const maxSeconds = asset.mime.startsWith("video/") ? Number(meta.maxSeconds) || SPEECH_MAX_SECONDS : SPEECH_MAX_SECONDS;
+  const payload: RenderPayload = { id: asset.id, operation: "inspect", url: `${siteUrl(e)}/api/upload-inputs/${asset.id}?token=${meta.token}`, maxSeconds };
+  let speech = false;
   try {
-    let slot: number | null = null, result: RenderStatus | null = null;
-    for (let i = 0; i < 90 && !result; i++) {
-      const r = await step.do(`inspect-${i}`, { retries: { limit: 2, delay: "10 seconds" }, timeout: "2 minutes" }, async () => {
-        if (slot === null) {
-          const accepted = await submitRender(e, payload, null, async () => {});
-          if (accepted === null) return { slot: null, status: { status: "running" } as RenderStatus };
-          return { slot: accepted, status: await renderStatus(e, accepted, asset.id) };
-        }
-        return { slot, status: await renderStatus(e, slot, asset.id) };
-      });
-      slot = r.slot;
-      if (r.status.status === "completed") result = r.status;
-      else if (r.status.status === "failed") throw new Error(r.status.error || "MEDIA_FORMAT");
-      else await step.sleep(`inspect-wait-${i}`, "4 seconds");
-    }
-    if (!result?.meta) throw new Error("MEDIA_TIMEOUT");
+    // A long video (up to 2 GB) takes the renderer longer to download.
+    const { slot, result } = await rendererJob(e, step, "inspect", payload, maxSeconds > SPEECH_MAX_SECONDS ? 300 : 90, "4 seconds");
+    if (!result.meta) throw new Error("MEDIA_TIMEOUT");
     const m = result.meta, expected = asset.mime.split("/")[0];
     if (m.kind !== expected) throw new Error("MEDIA_FORMAT");
-    await step.do("ready", async () => {
+    speech = await step.do("ready", async () => {
+      // Files that may hold speech are transcribed next, for free while the day's allowance lasts (Scribe reads them
+      // with a new capability token). Longer videos are transcribed on request.
+      const checked = { hasAudio: m.hasAudio };
+      const listen = mayHaveSpeech({ ...asset, duration: result.duration || 0 }, m.hasAudio) ? await claimSpeech(e, asset.user_id, checked, result.duration || 0) : null;
       await e.DB.prepare("UPDATE media_assets SET status='ready',duration=?,width=?,height=?,meta=?,updated_at=? WHERE id=? AND status='checking'")
-        .bind(result!.duration || 0, m.width || 0, m.height || 0, JSON.stringify({ hasAudio: m.hasAudio }), now(), asset.id).run();
-      if (slot !== null) await releaseRender(e, slot, asset.id);
+        .bind(result.duration || 0, m.width || 0, m.height || 0, JSON.stringify(listen || checked), now(), asset.id).run();
+      await releaseRender(e, slot, asset.id);
+      return !!listen;
     });
   } catch (error) {
     const code = error instanceof Error ? error.message : "";
     await step.do("failed", () => failAsset(e, asset.id, ({
       MEDIA_TOO_LARGE: "This video is too large (over 4096 pixels or 9 megapixels per frame).",
-      MEDIA_TOO_LONG: "Videos and tracks can be up to 10 minutes long.",
+      MEDIA_TOO_LONG: maxSeconds > SPEECH_MAX_SECONDS ? "Videos can be up to 2 hours long." : asset.mime.startsWith("video/")
+        ? "Videos can be up to 10 minutes long on the free trial; paid plans take videos up to 2 hours." : "Tracks can be up to 10 minutes long.",
       MEDIA_FORMAT: "This file can't be read. Use MP4, MOV or WebM videos and MP3, WAV, M4A or OGG tracks.",
       MEDIA_TIMEOUT: "Checking this file took too long. Try uploading it again.",
     } as Record<string, string>)[code] || "This file couldn't be checked. Try uploading it again."));
+  }
+  if (speech) await findSpeech(e, step, asset.id);
+}
+
+/** Changes a file's meta (read fresh, so other changes are kept). */
+async function patchMeta(e: Env, assetId: string, change: (meta: any) => void) {
+  const row = await e.DB.prepare("SELECT meta FROM media_assets WHERE id=?").bind(assetId).first<{ meta: string }>();
+  if (!row) return;
+  const meta = json<any>(row.meta, {});
+  change(meta);
+  await e.DB.prepare("UPDATE media_assets SET meta=?,updated_at=? WHERE id=?").bind(JSON.stringify(meta), now(), assetId).run();
+}
+/** Calls to Scribe: once (each is billed), and long enough for two hours of sound. */
+const scribeOnce = { retries: { limit: 0, delay: "1 second" as const }, timeout: "50 minutes" as const };
+/**
+ * Transcribes a ready file whose speech is pending: ElevenLabs Scribe reads it through its capability link. A free
+ * transcription that fails leaves the file usable, without subtitles ("failed"; it can be tried again); a paid one
+ * (`paid`: a run of kind "speech") also fails its run, which refunds the credits.
+ */
+async function findSpeech(e: Env, step: WorkflowStep, assetId: string, paid = false) {
+  const job = await step.do("speech-start", async () => {
+    const a = await e.DB.prepare("SELECT meta,status,duration FROM media_assets WHERE id=?").bind(assetId).first<any>();
+    const meta = json<any>(a?.meta, {});
+    if (a?.status !== "ready" || meta.speech?.status !== "pending" || typeof meta.listen?.token !== "string") return null;
+    return { url: `${siteUrl(e)}/api/upload-inputs/${assetId}?token=${meta.listen.token}`, duration: Number(a.duration) || 0, claim: uid() };
+  });
+  if (!job) {
+    if (paid) throw new Error("SPEECH_INVALID");
+    return;
+  }
+  try {
+    await step.do("speech-transcribe", scribeOnce, async () => {
+      // Paid once: the claim is stored before the call, so a step that runs again after it (its answer lost) stops.
+      const before = await e.DB.prepare("SELECT meta FROM media_assets WHERE id=?").bind(assetId).first<{ meta: string }>();
+      if (json<any>(before?.meta, {}).speech?.claim) throw new Error("SPEECH_UNCERTAIN");
+      await patchMeta(e, assetId, (meta) => { meta.speech = { ...meta.speech, claim: job.claim }; });
+      const transcript = await transcribe(e, job.url, job.duration);
+      await patchMeta(e, assetId, (meta) => {
+        const found = transcript.words.length > 0;
+        meta.speech = { status: found ? "found" : "none", at: now(), ...(found && transcript.language && { language: transcript.language }) };
+        if (found) meta.transcript = transcript;
+        else delete meta.transcript;
+        delete meta.listen;
+      });
+    });
+  } catch (error) {
+    // Never a failed upload: the file stays ready, only without subtitles.
+    console.error("Speech not found", { assetId, code: error instanceof Error && /^[A-Z_]{3,40}$/.test(error.message) ? error.message : "INTERNAL" });
+    await step.do("speech-failed", () => patchMeta(e, assetId, (meta) => {
+      meta.speech = { status: "failed", at: now() };
+      delete meta.listen;
+    }));
+    if (paid) throw error;
   }
 }
 

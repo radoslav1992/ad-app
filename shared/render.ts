@@ -1,4 +1,5 @@
 import type { Motion } from "./layers";
+import type { TransitionKind } from "./story";
 
 // The contract between the Worker and the private renderer container (renderer/server.py). The Worker turns a post
 // into one of these payloads (server/render-plan.ts); the renderer downloads every input from short-lived
@@ -10,7 +11,8 @@ import type { Motion } from "./layers";
 //   GET    /jobs/:id/file/:n  → the n-th output file (video/mp4 or image/jpeg)
 //   DELETE /jobs/:id          → forgets the job (stops it if running)
 
-/** Every frame is 9:16 portrait at 1080 × 1920, the size all short-form networks show full-screen. */
+/** Every video frame is 9:16 portrait at 1080 × 1920, the size all short-form networks show full-screen (carousel
+ *  stills are 1080 × 1350 or 1080 × 1080, shared/carousel.ts). */
 export const FRAME = { width: 1080, height: 1920 } as const;
 
 export type ComposeSegment = {
@@ -29,6 +31,23 @@ export type ComposeSegment = {
   fit?: "cover" | "contain";
   /** Video only: volume of its own sound (0–1). Absent or 0: silent. */
   audio?: number;
+  /**
+   * Video only, instant cuts (shared/cuts.ts): the parts kept, in seconds on the segment's own clock (0 = `trim`),
+   * sorted, on the 1/30 s frame grid, at most 300; `duration` is their sum. Picture and sound are cut alike.
+   */
+  keep?: [number, number][] | null;
+  /**
+   * Video only, "follow the speaker" (shared/track.ts): a picture wider than the frame is cropped to the frame's shape
+   * around this path, on the segment's own clock, before it is fitted.
+   */
+  follow?: [number, number][] | null;
+  /**
+   * The way in from the segment before (not on the first): its first `duration` seconds (a whole number of frames)
+   * blend over the last ones before it, so the output is shorter by that overlap. Absent: a hard cut.
+   */
+  transition?: { kind: TransitionKind; duration: number } | null;
+  /** Video only: a clip shorter than the segment starts again from its beginning (else its last frame holds). */
+  loop?: boolean;
 };
 export type ComposePayload = {
   id: string;
@@ -36,7 +55,7 @@ export type ComposePayload = {
   urls: string[];
   width: number;
   height: number;
-  /** 1–20 segments joined with hard cuts. */
+  /** 1–40 segments joined with hard cuts or their transitions. */
   segments: ComposeSegment[];
   /** A separate speech track placed at `start` seconds on the output clock. */
   voice?: { input: number; start: number; volume: number } | null;
@@ -62,22 +81,40 @@ export type StillsPayload = {
   urls: string[];
   width: number;
   height: number;
-  /** 1–10 slides: the image (or a solid colour) cover-cropped to the frame, then its ASS burned in → file i (JPEG). */
-  slides: { input?: number; color?: string; ass: string }[];
+  /**
+   * 1–10 slides → file i (JPEG): the image cover-cropped to the frame, or a solid colour; then its ASS burned in. With
+   * `box` (a carousel), the page is `color` and the image is cover-cropped into the box (corners rounded by `radius`)
+   * before the ASS; a `logo` is fitted inside its box (keeping its shape, centred) over everything.
+   */
+  slides: {
+    input?: number; color?: string; ass: string;
+    box?: { x: number; y: number; w: number; h: number; radius: number };
+    logo?: { input: number; x: number; y: number; w: number; h: number };
+  }[];
   synthetic: boolean;
 };
-/** Reads an uploaded file: video/audio length, picture size, whether it has sound. */
-export type InspectPayload = { id: string; operation: "inspect"; url: string };
-export type RenderPayload = ComposePayload | StillsPayload | InspectPayload;
+/**
+ * Reads an uploaded file: video/audio length, picture size, whether it has sound. Media longer than `maxSeconds`
+ * (10 minutes by default; 2 hours for long videos on paid plans) is refused (MEDIA_TOO_LONG).
+ */
+export type InspectPayload = { id: string; operation: "inspect"; url: string; maxSeconds?: number };
+/**
+ * Where the main face is in seconds `start` to `start + length` (at most 10 minutes) of a video: the speaker path of
+ * shared/track.ts on the video's own clock, in the status (`track`). No file comes back.
+ */
+export type TrackPayload = { id: string; operation: "track"; url: string; start: number; length: number };
+export type RenderPayload = ComposePayload | StillsPayload | InspectPayload | TrackPayload;
 
 export type RenderStatus = {
   status: "running" | "completed" | "failed";
-  /** compose: length of the video; inspect: length of the media (0 for images). */
+  /** compose: length of the video; inspect: length of the media (0 for images); track: length of the part measured. */
   duration?: number;
   /** A short code (MEDIA_*), never a raw message. */
   error?: string;
-  /** How many output files GET /jobs/:id/file/:n serves. */
+  /** How many output files GET /jobs/:id/file/:n serves (MP4 or JPEG). */
   files?: number;
   /** inspect: what the file is. */
   meta?: { kind: "video" | "audio" | "image"; width: number; height: number; hasAudio: boolean };
+  /** track: the speaker path (checked against shared/track.ts by the Worker). */
+  track?: { v: number; points: [number, number][] };
 };

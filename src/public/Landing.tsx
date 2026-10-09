@@ -5,7 +5,7 @@ import {
   Sparkles, UserRound, Wand2, X,
 } from "lucide-react";
 import { PRODUCT } from "../../shared/brand";
-import type { FormatId, formats as Formats } from "../../shared/formats";
+import type { PostFormatId, formats as Formats } from "../../shared/formats";
 import { plans, TRIAL_DAYS } from "../../shared/plans";
 import { platforms } from "../../shared/social";
 import { useAuth } from "../lib";
@@ -103,19 +103,25 @@ function PhoneMockup() {
         <CalendarClock size={22} color="#1e2433" />
         <span>Scheduled · Tue 9:00<small>TikTok · Reels · Shorts</small></span>
       </div>
-      <div className="float f3"><Sparkles size={16} color="#f26b1d" /> Slideshow</div>
+      <div className="float f3"><Sparkles size={16} color="#65a30d" /> Slideshow</div>
     </div>
   );
 }
 
 /** Small CSS pictures of each format (decorative). */
-function FormatArt({ id }: { id: FormatId }) {
+function FormatArt({ id }: { id: PostFormatId }) {
   return (
     <div className={`fmt-art fmt-${id}`} aria-hidden="true">
       {id === "slideshow" && (
         <>
           <div className="dots"><i /><i /><i /><i /></div>
           <b>5 slides, one big idea</b>
+        </>
+      )}
+      {id === "carousel" && (
+        <>
+          <div className="page"><b>01</b><span>Price the outcome, not the hours</span><i /><i /><small>@yourbrand · 2/7</small></div>
+          <div className="dots"><i /><i /><i /><i /><i /></div>
         </>
       )}
       {id === "text" && <p>Nobody tells you this when you start: the first version is supposed to be a little embarrassing.</p>}
@@ -138,6 +144,19 @@ function FormatArt({ id }: { id: FormatId }) {
           <span className="cap">this <em>changed</em> how I</span>
         </>
       )}
+      {id === "story" && (
+        <>
+          <div className="sketch"><i /><i /><i /></div>
+          <span className="cap">Octopuses Have Three <em>Hearts</em></span>
+        </>
+      )}
+      {id === "clip" && (
+        <>
+          <div className="wide"><div className="person" /></div>
+          <div className="crop" />
+          <span className="cap">the part <em>nobody</em> tells you</span>
+        </>
+      )}
     </div>
   );
 }
@@ -147,7 +166,7 @@ function FormatCards() {
   if (!list)
     return (
       <ul className="formats" aria-busy="true">
-        {[0, 1, 2, 3, 4].map((i) => (
+        {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
           <li key={i} className="glass format-card skeleton" aria-hidden="true">
             <div className="fmt-art" />
             <div><span className="bar short-bar" /><span className="bar" /></div>
@@ -158,7 +177,7 @@ function FormatCards() {
     );
   return (
     <ul className="formats">
-      {(Object.keys(list) as FormatId[]).map((id) => (
+      {(Object.keys(list) as PostFormatId[]).map((id) => (
         <li key={id} className="glass format-card">
           <FormatArt id={id} />
           <div>
@@ -187,7 +206,7 @@ const faqs: { q: string; a: ReactNode }[] = [
     a: (
       <p>
         {PRODUCT.name} turns your website into a steady stream of short-form posts. It learns your product and audience, writes post ideas, and renders them
-        as slideshows, text videos, hook-and-demo videos, green screen memes and AI creator videos. You approve the ones you like and they publish on your
+        as slideshows, carousels, text videos, hook-and-demo videos, green screen memes, AI creator videos and narrated videos. You approve the ones you like and they publish on your
         schedule.
       </p>
     ),
@@ -251,7 +270,7 @@ const faqs: { q: string; a: ReactNode }[] = [
           captions never costs credits.
         </p>
         <p>
-          AI credits pay for the AI extras: AI images, AI video backgrounds, AI voices and talking AI creators. The <Link to="/pricing">pricing page</Link> lists
+          AI credits pay for the AI extras: AI images, AI video clips, AI voices and talking AI creators. The <Link to="/pricing">pricing page</Link> lists
           what each one costs.
         </p>
       </>
@@ -276,10 +295,10 @@ export function Landing() {
 
   return (
     <>
-      <section className="wrap hero" aria-labelledby="hero-title">
+      <section className="pub-wrap hero" aria-labelledby="hero-title">
         <div>
           <span className="eyebrow"><Sparkles size={14} aria-hidden="true" /> {PRODUCT.tagline}</span>
-          <h1 id="hero-title">Your content team, <em>on autopilot</em></h1>
+          <h1 id="hero-title">Never break your <em>posting streak</em></h1>
           <p className="lead">{PRODUCT.pitch}</p>
           <StartForm />
         </div>
@@ -287,7 +306,7 @@ export function Landing() {
       </section>
 
       <section className="pub-section" id="how-it-works" aria-labelledby="how-title" tabIndex={-1}>
-        <div className="wrap">
+        <div className="pub-wrap">
           <div className="pub-section-head center">
             <span className="kicker">How it works</span>
             <h2 className="title" id="how-title">From link to schedule in three steps</h2>
@@ -308,9 +327,9 @@ export function Landing() {
       </section>
 
       <section className="pub-section" id="features" aria-labelledby="formats-title" tabIndex={-1}>
-        <div className="wrap">
+        <div className="pub-wrap">
           <div className="pub-section-head center">
-            <span className="kicker">Five formats</span>
+            <span className="kicker">Eight formats</span>
             <h2 className="title" id="formats-title">The formats that work on short-form, made for you</h2>
             <p className="sub">Mix them freely. Each post comes with its caption, hashtags and title for every network.</p>
           </div>
@@ -319,7 +338,7 @@ export function Landing() {
       </section>
 
       <section className="pub-section" aria-labelledby="blitz-title">
-        <div className="wrap split">
+        <div className="pub-wrap split">
           <div className="copy">
             <span className="kicker">Blitz</span>
             <h2 className="title" id="blitz-title">Approve posts with a swipe</h2>
@@ -359,7 +378,7 @@ export function Landing() {
       </section>
 
       <section className="pub-section" aria-labelledby="more-title">
-        <div className="wrap">
+        <div className="pub-wrap">
           <div className="pub-section-head center">
             <span className="kicker">Everything around the posts</span>
             <h2 className="title" id="more-title">Set it up once. Keep posting.</h2>
@@ -428,7 +447,7 @@ export function Landing() {
       </section>
 
       <section className="pub-section" aria-labelledby="plans-title">
-        <div className="wrap">
+        <div className="pub-wrap">
           <div className="pub-section-head center">
             <span className="kicker">Pricing</span>
             <h2 className="title" id="plans-title">Start free. Upgrade when it works for you.</h2>
@@ -453,7 +472,7 @@ export function Landing() {
       </section>
 
       <section className="pub-section" id="faq" aria-labelledby="faq-title" tabIndex={-1}>
-        <div className="wrap">
+        <div className="pub-wrap">
           <div className="pub-section-head center">
             <span className="kicker">FAQ</span>
             <h2 className="title" id="faq-title">Questions, answered</h2>
@@ -473,7 +492,7 @@ export function Landing() {
       </section>
 
       <section className="pub-section" aria-labelledby="cta-title">
-        <div className="wrap">
+        <div className="pub-wrap">
           <div className="gradient-border cta-band">
             <div>
               <h2 id="cta-title">Your next month of posts starts with one link</h2>

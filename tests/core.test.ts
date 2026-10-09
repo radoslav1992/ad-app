@@ -151,3 +151,22 @@ describe("on-screen text", () => {
     expect(items.map((i) => i.kind)).toEqual(["box", "text"]);
   });
 });
+
+describe("public address", () => {
+  const fetchAt = (env: any, url: string, method = "GET") =>
+    worker.fetch(new Request(url, { method, redirect: "manual" }), env, { waitUntil: () => {}, passThroughOnException: () => {} } as any);
+  it("sends the other domains to SITE_URL with the same path, keeping the method", async () => {
+    const { env } = testEnv();
+    for (const host of ["https://www.app.test", "https://app.example"]) {
+      const r = await fetchAt(env, `${host}/pricing?plan=growth`);
+      expect(r.status).toBe(308);
+      expect(r.headers.get("location")).toBe(`${SITE}/pricing?plan=growth`);
+    }
+    expect((await fetchAt(env, "https://www.app.test/api/billing/webhook", "POST")).status).toBe(308);
+  });
+  it("leaves the site itself, workers.dev and local development alone", async () => {
+    const { env } = testEnv();
+    for (const url of [`${SITE}/api/health`, "https://ad-app.someone.workers.dev/api/health", "http://localhost:8787/api/health"])
+      expect((await fetchAt(env, url)).status).toBe(200);
+  });
+});

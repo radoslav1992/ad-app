@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { AlertTriangle, Check, Clock, CreditCard, ExternalLink, Sparkles } from "lucide-react";
-import { Spinner, useToast } from "../ui";
+import { Link, useSearchParams } from "react-router-dom";
+import { AlertTriangle, ArrowRight, Check, Clock, CreditCard, ExternalLink, Gift, Sparkles, Undo2 } from "lucide-react";
+import { Modal, Spinner, useToast } from "../ui";
 import { errorText, number, post, timeLeft, useApi, useAuth } from "../lib";
 import { PRICE_NOTE, paidPlans, planById, planIncludes, plans, tariffs, type PaidPlanId } from "../../shared/plans";
+import { IMMEDIATE_START_TEXT, WITHDRAWAL_DAYS } from "../../shared/withdrawal";
 import { PRODUCT } from "../../shared/brand";
 import { formatDate, useSignedInUser } from "./pickers";
 import "./pages.css";
@@ -22,6 +23,8 @@ export function BillingPage() {
   const [params, setParams] = useSearchParams();
   const [busy, setBusy] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  // A first checkout asks for the express request to start at once (the server refuses checkout without it).
+  const [confirming, setConfirming] = useState<PaidPlanId | null>(null);
 
   // A plan picked on the pricing page (?plan=, or remembered through sign-up): highlight it, never start checkout.
   const [wanted] = useState<PaidPlanId | null>(() => {
@@ -82,8 +85,9 @@ export function BillingPage() {
     }
   };
   const portal = (target?: PaidPlanId) => go(target ? `portal-${target}` : "portal", () => post<{ url: string }>("/billing/portal", target ? { plan: target } : {}));
-  const choose = (target: PaidPlanId) =>
-    user.hasSubscription ? portal(target) : go(target, () => post<{ url: string }>("/billing/checkout", { plan: target }));
+  const choose = (target: PaidPlanId) => (user.hasSubscription ? portal(target) : setConfirming(target));
+  const checkout = (target: PaidPlanId) => go(target, () => post<{ url: string }>("/billing/checkout", { plan: target, immediateStart: true }));
+  const granted = !!user.granted && !!user.periodEnd;
   const creditsShare = user.limit ? Math.min(1, user.used / user.limit) : 0;
   const postsShare = user.postsLimit ? Math.min(1, user.postsUsed / user.postsLimit) : 0;
 
@@ -111,6 +115,15 @@ export function BillingPage() {
           {user.hasSubscription && <button type="button" className="btn sm" onClick={() => void portal()} disabled={!!busy}>Update payment method</button>}
         </div>
       )}
+      {granted && (
+        <div className="notice good row wrap" role="note" style={{ marginBottom: 16 }}>
+          <Gift size={18} aria-hidden="true" />
+          <span className="grow">
+            You have <strong>{plan.name}</strong> free until {formatDate(user.periodEnd!)}, from the {PRODUCT.name} team. No payment is needed. After that you go
+            back to {user.hasSubscription ? "your paid plan" : "the free plan"} unless you choose a plan.
+          </span>
+        </div>
+      )}
       {!config.loading && !enabled && (
         <div className="notice warn" role="note" style={{ marginBottom: 16 }}>
           <strong>Payments open soon.</strong> Paid plans aren't available yet; keep using your free trial meanwhile.
@@ -124,18 +137,21 @@ export function BillingPage() {
         <div className="card-head">
           <div>
             <span className="small muted">Current plan</span>
-            <h2 id="current-plan" style={{ fontSize: 26, marginTop: 2 }}>{plan.name}{!free && <span className="muted" style={{ fontSize: 16, fontWeight: 500, fontFamily: "var(--font)" }}> · ${plan.price}/month</span>}</h2>
+            <h2 id="current-plan" style={{ fontSize: 26, marginTop: 2 }}>{plan.name}{!free && <span className="muted" style={{ fontSize: 16, fontWeight: 500, fontFamily: "var(--font)" }}> · {granted ? "free month" : `$${plan.price}/month`}</span>}</h2>
             <p>
               {free
                 ? user.trialEnded || !user.trialEndsAt
                   ? "Your free trial has ended. Your posts are still here; upgrade to keep creating."
                   : <><Clock size={14} aria-hidden="true" style={{ verticalAlign: -2 }} /> Free trial · {timeLeft(user.trialEndsAt)} (until {formatDate(user.trialEndsAt)})</>
-                : user.periodEnd
-                  ? `This period ends on ${formatDate(user.periodEnd)}. Credits and posts reset then.`
-                  : plan.description}
+                : granted
+                  ? `Free until ${formatDate(user.periodEnd!)}. These credits and posts are for that month.`
+                  : user.periodEnd
+                    ? `This period ends on ${formatDate(user.periodEnd)}. Credits and posts reset then.`
+                    : plan.description}
             </p>
           </div>
           {free && user.trialEnded && <span className="chip red">Trial ended</span>}
+          {granted && <span className="chip green">Free month</span>}
         </div>
         <div className="usage">
           <Usage label="AI credits" used={user.used} limit={user.limit} share={creditsShare} />
@@ -169,7 +185,7 @@ export function BillingPage() {
                 className={`card plan-card${current ? " current" : ""}${p.id === "growth" ? " popular" : ""}${p.id === highlight ? " wanted" : ""}`}>
                 <div className="row between">
                   <h3 id={`plan-${p.id}`} style={{ fontSize: 20 }}>{p.name}</h3>
-                  {current ? <span className="chip green">Your plan</span> : p.id === highlight ? <span className="chip violet">Your pick</span> : p.id === "growth" ? <span className="chip orange">Most popular</span> : null}
+                  {current ? <span className="chip green">Your plan</span> : p.id === highlight ? <span className="chip violet">Your pick</span> : p.id === "growth" ? <span className="chip brand">Most popular</span> : null}
                 </div>
                 <div className="plan-price">${p.price}<small> /month</small></div>
                 <p className="muted small">{p.description}</p>
@@ -190,7 +206,26 @@ export function BillingPage() {
             {" "}<button type="button" className="link" onClick={() => void portal()} disabled={!!busy}>Open billing portal <ExternalLink size={12} aria-hidden="true" /></button>
           </p>
         )}
+        {granted && !user.hasSubscription && enabled && (
+          <p className="hint" style={{ marginTop: 12 }}>
+            A paid plan starts when you subscribe. A higher plan than your free one applies straight away; otherwise it applies when the free month ends.
+          </p>
+        )}
       </section>
+
+      {user.hasSubscription && (
+        <section className="section card row wrap" aria-labelledby="withdraw-title" style={{ alignItems: "center", gap: 16 }}>
+          <Undo2 size={22} aria-hidden="true" style={{ color: "var(--muted)", flex: "none" }} />
+          <div className="grow" style={{ minWidth: 220 }}>
+            <h2 id="withdraw-title" style={{ fontSize: 18 }}>Changed your mind?</h2>
+            <p className="muted small" style={{ marginTop: 4 }}>
+              Within {WITHDRAWAL_DAYS} days of subscribing you can withdraw: we end the plan and refund what you paid, less the share of the plan you used.
+              {" "}<Link to="/terms#withdrawal" className="link">How it works</Link>
+            </p>
+          </div>
+          <Link to="/contact?topic=withdrawal" className="btn">Ask to withdraw<ArrowRight size={16} aria-hidden="true" /></Link>
+        </section>
+      )}
 
       <section className="section card" aria-labelledby="includes-title">
         <h2 id="includes-title" style={{ marginBottom: 14 }}>Every plan includes</h2>
@@ -216,7 +251,39 @@ export function BillingPage() {
           </table>
         </div>
       </section>
+      {confirming && (
+        <CheckoutConfirm plan={confirming} busy={busy === confirming} onClose={() => { if (!busy) setConfirming(null); }} onConfirm={() => void checkout(confirming)} />
+      )}
     </main>
+  );
+}
+
+/**
+ * Before a first checkout: the plan, its price and renewal, and the consumer's express request for the plan to start
+ * at once (required; the server records it, repeats it on Stripe's page and confirms it by email).
+ */
+function CheckoutConfirm({ plan, busy, onClose, onConfirm }: { plan: PaidPlanId; busy: boolean; onClose: () => void; onConfirm: () => void }) {
+  const [agreed, setAgreed] = useState(false);
+  const p = planById(plan);
+  return (
+    <Modal title={`${p.name} · $${p.price} a month`} onClose={onClose} footer={
+      <>
+        <button type="button" className="btn" onClick={onClose} disabled={busy}>Back</button>
+        <button type="button" className="btn primary" onClick={onConfirm} disabled={!agreed || busy}>{busy && <Spinner label="Opening checkout" />}Continue to payment<ArrowRight size={16} aria-hidden="true" /></button>
+      </>
+    }>
+      <div className="stack">
+        <p>{PRICE_NOTE} The plan renews every month until you cancel it here in Billing. You pay on Stripe's secure page.</p>
+        <label className="check">
+          <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
+          <span>{IMMEDIATE_START_TEXT}</span>
+        </label>
+        <p className="small muted">
+          More: <Link to="/terms#withdrawal" className="link" target="_blank" rel="noopener">your right to withdraw</Link> ·{" "}
+          <Link to="/terms" className="link" target="_blank" rel="noopener">Terms of Service</Link>
+        </p>
+      </div>
+    </Modal>
   );
 }
 

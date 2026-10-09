@@ -134,7 +134,7 @@ export function Blitz() {
               {current.topic && <span className="chip violet">{current.topic}</span>}
             </div>
             <div className="row" style={{ justifyContent: "center", marginTop: 8 }}>
-              <button className="chip orange button" onClick={() => setWhy(true)}><Info size={13} /> Why this content?</button>
+              <button className="chip brand button" onClick={() => setWhy(true)}><Info size={13} /> Why this content?</button>
             </div>
             <Deck posts={data.posts} muted={muted} onMute={setMuted} onDecide={review} />
             <div className="blitz-actions">

@@ -1,10 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { CheckCircle2, Circle, Rocket, PenSquare, Share2, Zap, Building2, CalendarDays } from "lucide-react";
-import { api, fileUrl, number, useAuth, type Post } from "../lib";
+import { api, fileUrl, number, useApi, useAuth, type Post } from "../lib";
 import { useCurrentWorkspace } from "./workspace";
+import { compact, engagementOf, formatMoney, orDash } from "./stats";
 import { planById } from "../../shared/plans";
 import { formats } from "../../shared/formats";
+import type { AnalyticsResponse } from "../../shared/analytics";
 
 // The dashboard home: what is waiting, what is left in the plan, and the next steps to get publishing.
 type Counts = { blitz: number; making: number; approved: number; failed: number; total: number };
@@ -48,6 +50,7 @@ export function Home() {
           <span className="small muted">posts left · {number(Math.max(0, user.limit - user.used))} AI credits</span>
         </div>
       </div>
+      <AnalyticsSummary workspaceId={workspace.id} />
       <div className="grid two">
         <section className="card stack">
           <h2>Get set up</h2>
@@ -64,7 +67,7 @@ export function Home() {
             <div className="media-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
               {recent.slice(0, 8).map((p) => (
                 <Link key={p.id} to="/app/content" className="thumb" title={p.hook}>
-                  {p.renderStatus === "ready" && (p.slides[0] || p.coverAssetId) ? <img src={fileUrl(p.slides[0] || p.coverAssetId)} alt={p.hook} loading="lazy" /> : null}
+                  {p.renderStatus === "ready" && (p.slides[0] || p.coverAssetId) ? <img src={fileUrl(p.slides[0] || p.coverAssetId)} alt={p.hook} loading="lazy" className={p.format === "carousel" ? "whole" : undefined} /> : null}
                   <span className="thumb-label">{formats[p.format].name}</span>
                 </Link>
               ))}
@@ -81,6 +84,31 @@ export function Home() {
     </main>
   );
 }
+/** The last 30 days in four numbers, from the analytics page's data. */
+function AnalyticsSummary({ workspaceId }: { workspaceId: string }) {
+  const { data: a } = useApi<AnalyticsResponse>(`/workspaces/${workspaceId}/analytics?days=30`);
+  if (!a) return null;
+  const t = a.totals;
+  const empty = !t.posts && !t.clicks && !t.conversions;
+  const revenue = formatMoney(t.revenue);
+  return (
+    <section className="card stack" style={{ marginBottom: 18 }} aria-labelledby="home-analytics">
+      <div className="row between"><h2 id="home-analytics">Last 30 days</h2><Link to="/app/analytics" className="small">Analytics</Link></div>
+      {empty ? (
+        <p className="muted">
+          Views, likes, clicks and sales show up here a few hours after your first posts go out. <Link to="/app/analytics#tracking">Set up click tracking</Link>
+        </p>
+      ) : (
+        <div className="an-home-stats">
+          <div><strong>{orDash(t.views)}</strong><span>views</span></div>
+          <div><strong>{orDash(engagementOf(t))}</strong><span>likes, comments and shares</span></div>
+          <div><strong>{compact(t.clicks)}</strong><span>clicks to your site</span></div>
+          <div><strong>{compact(t.conversions)}</strong><span>{t.conversions === 1 ? "sale" : "sales"}{revenue ? ` · ${revenue}` : ""}</span></div>
+        </div>
+      )}
+    </section>
+  );
+}
 function Stat({ label, value, to }: { label: string; value?: number; to: string }) {
   return (
     <Link to={to} className="card stat" style={{ textDecoration: "none" }}>
@@ -92,7 +120,7 @@ function Stat({ label, value, to }: { label: string; value?: number; to: string 
 function Shortcut({ to, icon, title, text }: { to: string; icon: ReactNode; title: string; text: string }) {
   return (
     <Link to={to} className="card row" style={{ textDecoration: "none", alignItems: "flex-start" }}>
-      <span className="logo-mark" style={{ background: "var(--navy)" }}>{icon}</span>
+      <span className="logo-mark" style={{ background: "var(--navy)", color: "#fff" }}>{icon}</span>
       <span><strong>{title}</strong><br /><span className="muted small">{text}</span></span>
     </Link>
   );

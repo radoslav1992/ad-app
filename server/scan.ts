@@ -43,7 +43,7 @@ export function normalizeWebsite(input: string): string | null {
   return url.href;
 }
 
-const UA = "Mozilla/5.0 (compatible; PostloopBot/1.0; +brand-profile)";
+const UA = "Mozilla/5.0 (compatible; HookstreakBot/1.0; +brand-profile)";
 /** Fetches a public URL, following up to four redirects (each re-checked), refusing more than `limit` bytes. */
 export async function safeFetch(value: string, accept: string, limit: number, ms = 12000) {
   let url = publicUrl(value);
