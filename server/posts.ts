@@ -161,9 +161,10 @@ posts.post("/", async (c) => {
   canCreate(a);
   return c.json(await createPost(c.env, user, d.workspaceId, spec, a, d.idempotencyKey, null, d.approve), 201);
 });
-/** The browser never sets generated recordings; they only come from the server's own runs. */
+/** The browser never sets generated recordings or a clip's speaker path; they only come from the server's own runs. */
 function stripGenerated(spec: Spec): Spec {
   if ("generated" in spec) { const { generated: _g, ...rest } = spec; return rest as Spec; }
+  if ("tracked" in spec) { const { tracked: _t, ...rest } = spec; return rest as Spec; }
   return spec;
 }
 posts.get("/:id", async (c) => {
@@ -178,8 +179,12 @@ posts.put("/:id", async (c) => {
   const d = z.object({ spec: specSchema, idempotencyKey: z.uuid() }).parse(await c.req.json());
   if (d.spec.format !== p.format) throw new HTTPException(400, { message: "A post keeps its format. Create a new post instead." });
   const stored = json<Spec>(p.spec, d.spec);
-  // The paid recording stays with the post while its words, character and voice do not change.
-  const spec = { ...stripGenerated(d.spec), ...("generated" in stored && stored.generated ? { generated: stored.generated } : {}) } as Spec;
+  // The paid recording stays with the post while its words, character and voice do not change (and a clip's speaker
+  // path while its moment does not).
+  const spec = {
+    ...stripGenerated(d.spec), ...("generated" in stored && stored.generated ? { generated: stored.generated } : {}),
+    ...("tracked" in stored && stored.tracked && d.spec.format === "clip" ? { tracked: stored.tracked } : {}),
+  } as Spec;
   await checkReferences(c.env, user.id, spec);
   if (visualPart(spec) === visualPart(stored) && p.render_status === "ready") {
     await c.env.DB.prepare("UPDATE posts SET spec=?,caption=?,title=?,updated_at=? WHERE id=?").bind(JSON.stringify(spec), spec.caption, spec.title, now(), p.id).run();

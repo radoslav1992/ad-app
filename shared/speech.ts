@@ -1,12 +1,15 @@
 import type { CaptionWord } from "./captions";
 
-// Speech in uploaded videos and tracks: transcribed once after the upload is checked (server/speech.ts), kept with
-// word timings in the file's `meta`, and shown as subtitles where a post uses that part of the clip.
+// Speech in uploaded videos and tracks: transcribed once by ElevenLabs Scribe (server/speech.ts), kept with word
+// timings in the file's `meta`, and shown as subtitles where a post uses that part of the clip. Files up to 10 minutes
+// are transcribed for free after the upload is checked; longer videos (for clips) on request, for AI credits.
 
-/** Longest file whose speech is transcribed (the longest upload). */
+/** Longest file whose speech is transcribed for free (automatically after the upload, or "Find speech"). */
 export const SPEECH_MAX_SECONDS = 600;
-/** Words kept per file: about ten minutes of fast speech. */
-export const TRANSCRIPT_MAX_WORDS = 2000;
+/** Longest video at all (paid plans); its speech is transcribed on request (speechCredits). */
+export const LONG_VIDEO_SECONDS = 7200;
+/** Words kept per file: two hours of fast speech. */
+export const TRANSCRIPT_MAX_WORDS = 30000;
 /** "pending": being transcribed; "found": words were heard; "none": no speech; "failed": could not be checked. */
 export type SpeechStatus = "pending" | "found" | "none" | "failed";
 export type Transcript = { language: string; words: CaptionWord[] };

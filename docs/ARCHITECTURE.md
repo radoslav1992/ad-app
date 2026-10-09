@@ -3,8 +3,9 @@
 ## Stack
 
 React 19 + React Router + Vite (client, `src/`), a Hono Worker (`server/`), Cloudflare D1 (the schema in
-`migrations/`: `0001_initial.sql`, then `0002_analytics.sql`, which only adds), a private R2 bucket (`MEDIA`), three Workflows, a Containers pool of three FFmpeg
-renderers (`renderer/server.py`) and the Workers AI binding for text. Contracts shared by the client and server live
+`migrations/`: `0001_initial.sql`, then files that add to it, and `0005_clips.sql`, which rebuilds `posts` and `runs`
+for clips and paid speech; see below), a private R2 bucket (`MEDIA`), three Workflows, a Containers pool of three
+FFmpeg renderers (`renderer/server.py`, with OpenCV for face tracking) and the Workers AI binding for text. Contracts shared by the client and server live
 in `shared/` (formats/specs, plans and credits, captions and on-screen text layout, schedule, renderer payloads).
 
 ## From website to brand profile
@@ -51,22 +52,54 @@ word-by-word reveal are over within 0.6 s; that one is paced to the text and don
 drawn without animation and the cover is taken once the first text is fully shown. AI UGC captions use one of the
 twenty caption styles (`captionStyle`); the writer picks one per post and never repeats one within a batch.
 
-**Speech in uploads.** After an uploaded video or track is checked, one with sound and at most 10 minutes long is
-transcribed (`server/speech.ts`): the renderer's `audio` operation cuts its sound into mono 16 kHz MP3 parts of
-120 s, and Workers AI `@cf/openai/whisper-large-v3-turbo` hears each part (base64 `audio`, `vad_filter`); the words
-of `segments[].words` (offset by the part's start) are kept in `media_assets.meta.transcript`, at most 2,000. The
-renderer reads the ready file through its own capability token (an hour at most). It is free, limited to 30 files
-per person and day (and "Find speech" for older uploads to 10 an hour); any failure only means no subtitles. A hook
-& demo or a wall of text whose own clip keeps its sound can switch on `subtitles` (off by default): the plan places
-the words heard in the used part of the clip (`demo.start` + `seconds`, or each loop of the clip) on the output clock
-and burns them in the chosen caption style. The writer switches them on when its demo has speech.
+**Speech in uploads** (ported from rech-bg). An uploaded video or track is transcribed by ElevenLabs Scribe v2
+(`server/speech.ts`: `POST /v1/speech-to-text`, `model_id=scribe_v2`, `timestamps_granularity=word`, no
+`language_code`, so the language is detected and kept). Scribe reads the file itself from a capability link
+(`/api/upload-inputs/:id?token=`, valid while the transcription is pending, 3 hours at most). Only real words are
+kept, in time order and within the file, in `media_assets.meta.transcript` (`{language, words}`, at most 30,000);
+lists never carry them, `GET /api/media/:id?from=&to=` gives one moment's words. The call is made once: a claim is
+stored before it, so a step that runs again stops instead of paying twice.
+- **Free:** files up to 10 minutes, right after their check (or "Find speech"), within 20 files and 30 minutes per
+  person and day. A failure only means no subtitles.
+- **Paid:** longer videos (paid plans upload up to 2 hours, 1.9 GB) are transcribed on request, `POST
+  /api/media/:id/transcribe` with the price the person was shown (`speechCredits`: 1 credit per started 10 minutes).
+  It is a run of kind `speech`: credits reserved by the insert, refunded by `run_refund` when it fails, one active per
+  file (unique index).
+
+Where speech is used:
+- **Subtitles:** a hook & demo, or a wall of text whose own clip keeps its sound, can switch on `subtitles` (off by
+  default). The plan places the words heard in the used part of the clip on the output clock in the chosen caption
+  style; the writer switches them on when its demo has speech.
+- **Instant cuts** (`shared/cuts.ts`, rech-bg's "Мигновен монтаж"): with `cuts` on, a talking demo or a clip keeps
+  only its speech with a little air: pauses over 0.6 s (and, with `fillers`, "um"/"uh"/"erm") are cut. The kept
+  ranges are snapped to the 1/30 s frame grid and the preview computes the same ranges, so both cut at the same
+  places. The renderer selects them from one input (picture by frame, sound in 160-sample blocks), so picture and
+  sound stay the same length; subtitles move with the cuts and words a cut runs through are dropped.
+
+**Clips from a long video** (rech-bg's "Кратки клипове", the Clips page). `POST /api/shorts/moments` numbers the
+transcript by sentence and asks the text model for its strongest self-contained moments of 15–60 s, with a hook title,
+why it works and post text (a long transcript is read in parts of 24,000 characters, in parallel, best of each part
+first). Picks are checked: on sentence edges, inside the video, 12–75 s, not overlapping. 20 successful searches a
+day; the latest moments are kept with the video. Each chosen moment becomes a `clip` post (`POST /api/posts`, so it
+goes to Blitz): the moment of the video with its own sound, cut, captions of what is said and the hook title for 3 s.
+**Follow the speaker** (`shared/track.ts`): before the render, the renderer's `track` operation finds the main face
+in the moment (OpenCV YuNet at 4 samples a second, hard cuts from FFmpeg's scene score) and returns a path of crop
+keyframes. It is kept with the post (`spec.tracked`, server-owned, for that moment), and the render crops the wide
+video to 9:16 around it; no face, a video no wider than 9:16, or a failure leaves the picture centred.
+
+**Migration 0005.** D1 always enforces foreign keys and runs a migration in one transaction, and `DROP TABLE`
+deletes every row first, which would cascade to `runs`, `media_assets` and `publications` (and queue their files for
+deletion) even with `defer_foreign_keys`. So `posts` and `runs` are copied aside, their keys are moved (`'~'||id`) so
+no child row matches, the tables are dropped and recreated, and the copies are put back under the original keys,
+which resolves the deferred violations before the commit. Indexes and triggers are recreated word for word
+(`tests/shorts.test.ts` proves it with rows in every child table).
 
 Paid provider calls are made once. A claim is stored in `runs.provider` before the call and the ticket right after,
 so a retried step polls instead of paying again. A claim without a ticket fails the run; the exception is HeyGen,
 which is re-sent with the same `Idempotency-Key`. A failed run is refunded exactly once by the `run_refund` trigger.
 Maintenance re-dispatches runs whose workflow never started and fails runs stuck for 3 hours.
 
-Inputs reach the renderer, HeyGen and fal only through capability links: `/api/render-inputs/:run/:n?token=`, valid
+Inputs reach the renderer, HeyGen, fal and Scribe only through capability links: `/api/render-inputs/:run/:n?token=`, valid
 while the run works and for at most 6 hours, and only for the owner's or library files. The renderer refuses any
 other origin or path.
 

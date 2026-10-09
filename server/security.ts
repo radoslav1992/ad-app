@@ -101,6 +101,21 @@ export async function hit(
     .first<{ hits: number }>();
   return r?.hits || 0;
 }
+/**
+ * Adds `amount` to a counter only while the total stays within `max` (one statement, so parallel requests cannot pass
+ * it together); false when it would go over. `amount` may be negative to give some back.
+ */
+export async function take(env: Env, scope: string, seconds: number, identity: string, amount: number, max: number) {
+  const { key, expires } = await bucketKey(scope, identity, seconds);
+  if (amount < 0) {
+    await env.DB.prepare("UPDATE rate_limits SET hits=MAX(0,hits+?) WHERE key=?").bind(amount, key).run();
+    return true;
+  }
+  const r = await env.DB.prepare(
+    "INSERT INTO rate_limits(key,hits,expires_at) SELECT ?1,?2,?3 WHERE ?2<=?4 ON CONFLICT(key) DO UPDATE SET hits=hits+excluded.hits WHERE hits+excluded.hits<=?4 RETURNING hits",
+  ).bind(key, amount, expires, max).first<{ hits: number }>();
+  return !!r;
+}
 /** Throws 429 if a recorded counter already reached `max`, without adding a hit. */
 export async function limited(
   env: Env,

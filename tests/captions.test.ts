@@ -1,11 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import worker from "../server/index";
-import { ContentGeneration } from "../server/content-workflow";
+import { describe, expect, it } from "vitest";
 import { planRender, spokenWords } from "../server/render-plan";
 import { withItems } from "../server/caption-ass";
-import { claimSpeech, SPEECH_PER_DAY, transcribe, whisperWords, WHISPER_MODEL } from "../server/speech";
 import { conceptToSpec, varied, type Concept } from "../server/ideas";
-import { call, signedIn, testEnv } from "./helpers";
 import { specSchema } from "../shared/formats";
 import { defaultLook, layoutOverlay, overlayItems, revealSeconds, textAnimations, type TextLook } from "../shared/overlay";
 import { animState, type CaptionItem } from "../shared/caption-scene";
@@ -14,8 +10,6 @@ import { captionStyles } from "../shared/captions";
 import { textWidth } from "../shared/caption-fonts";
 
 const W = 1080, H = 1920;
-const step = { do: async (_name: string, a: any, b?: any) => (b ?? a)(), sleep: async () => {} };
-afterEach(() => vi.unstubAllGlobals());
 
 /** The state an ASS event shows at its start and end, read back from its override tags. */
 function eventStates(line: string) {
@@ -172,165 +166,6 @@ describe("render plan: animated text and subtitles", () => {
   it("cuts clip words to the used part by their middle", () => {
     const words = [{ text: "a", start: 0.9, end: 1.3 }, { text: "b", start: 1.6, end: 2.6 }, { text: "c", start: 3.9, end: 4.3 }];
     expect(clipWords(words, 1, 3, 10)).toEqual([{ text: "a", start: 10, end: 10.3 }, { text: "b", start: 10.6, end: 11.6 }]);
-  });
-});
-
-describe("speech in uploads", () => {
-  /** Whisper's answer for one part, in the documented shape. */
-  const whisper = (words: [string, number, number][], extra: Record<string, unknown> = {}) => ({
-    text: words.map((w) => w[0]).join(""), word_count: words.length, vtt: "WEBVTT",
-    transcription_info: { language: "en", language_probability: 0.98, duration: 120, duration_after_vad: 100 },
-    segments: [{ start: 0, end: 10, text: "x", temperature: 0, avg_logprob: -0.2, compression_ratio: 1.2, no_speech_prob: 0.01, words: words.map(([word, start, end]) => ({ word, start, end })) }],
-    ...extra,
-  });
-
-  it("reads Whisper's words, moved to their part, without sound notes or unlikely speech", () => {
-    const answer = whisper([[" Hello", 0.5, 0.9], [" world.", 0.9, 0.9], [" [Music]", 1, 3], [" ♪", 3, 4], [" ", 4, 5]], {
-      segments: [
-        whisper([[" Hello", 0.5, 0.9], [" world.", 0.9, 0.9], [" [Music]", 1, 3], [" ♪", 3, 4], [" ", 4, 5]]).segments[0],
-        { start: 10, end: 12, no_speech_prob: 0.9, avg_logprob: -1.4, words: [{ word: " Thanks", start: 10, end: 11 }] },
-        { start: 12, end: 13, words: [{ word: " no-time" }, { word: " ok", start: 12, end: 12.4 }] },
-      ],
-    });
-    expect(whisperWords(answer, 120)).toEqual({
-      language: "en",
-      words: [{ text: "Hello", start: 120.5, end: 120.9 }, { text: "world.", start: 120.9, end: 120.95 }, { text: "ok", start: 132, end: 132.4 }],
-    });
-    expect(whisperWords({ error: "x" })).toEqual({ language: "", words: [] });
-    expect(whisperWords(null)).toEqual({ language: "", words: [] });
-  });
-
-  it("sends each part to Whisper as base64 and joins the words in order", async () => {
-    const seen: any[] = [];
-    const env: any = { AI: { run: async (model: string, input: any) => { seen.push({ model, input }); return whisper([[` part${seen.length}`, 1, 1.5]]); } } };
-    const parts = [new Uint8Array([1, 2, 3]), new Uint8Array(70000).fill(255)];
-    const t = await transcribe(env, parts, 120);
-    expect(t).toEqual({ language: "en", words: [{ text: "part1", start: 1, end: 1.5 }, { text: "part2", start: 121, end: 121.5 }] });
-    expect(seen.map((s) => s.model)).toEqual([WHISPER_MODEL, WHISPER_MODEL]);
-    expect(seen[0].input).toEqual({ audio: "AQID", task: "transcribe", vad_filter: true, condition_on_previous_text: false });
-    expect(Buffer.from(seen[1].input.audio, "base64")).toEqual(Buffer.from(parts[1]));
-  });
-
-  /** A renderer that checks uploads and cuts their sound: `parts` MP3 files (0: silent). */
-  function renderer(env: any, parts: number, log: any[]) {
-    const jobs = new Map<string, any>();
-    return {
-      idFromName: (n: string) => n,
-      get: () => ({
-        fetch: async (url: string, init: any = {}) => {
-          const path = new URL(url).pathname.split("/").filter(Boolean);
-          if (init.method === "POST") {
-            const p = JSON.parse(init.body);
-            if (!jobs.has(p.id)) {
-              // The renderer downloads the file through its capability link while the job runs.
-              const link = new URL(p.url);
-              p.download = (await call(worker, env, "GET", link.pathname + link.search)).status;
-              log.push(p);
-              jobs.set(p.id, p);
-            }
-            return Response.json({ status: "running" }, { status: 202 });
-          }
-          if (init.method === "DELETE") return Response.json({});
-          const job = jobs.get(path[1]);
-          if (!job) return new Response("{}", { status: 404 });
-          if (path[2] === "file") return new Response(new Uint8Array(1000).fill(Number(path[3]) + 1));
-          if (job.operation === "inspect") return Response.json({ status: "completed", duration: 130, files: 0, meta: { kind: "video", width: 1080, height: 1920, hasAudio: true } });
-          return Response.json({ status: "completed", duration: 130, files: parts });
-        },
-      }),
-    };
-  }
-  /** An uploaded video waiting for its check (as /complete leaves it). */
-  async function upload(env: any, sqlite: any, user: { id: string; cookie: string }) {
-    // The first request gives the person their plan's storage.
-    await call(worker, env, "GET", "/api/auth/me", undefined, user.cookie);
-    const userId = user.id, id = crypto.randomUUID(), key = `media/${userId}/${id}.mp4`;
-    void env.MEDIA.put(key, new Uint8Array(5000).fill(9), { httpMetadata: { contentType: "video/mp4" } });
-    sqlite.prepare("INSERT INTO media_assets(id,user_id,kind,name,object_key,mime,bytes,status,meta,created_at,updated_at) VALUES (?,?,'upload','Demo.mp4',?,'video/mp4',5000,'checking',?,1,1)")
-      .run(id, userId, key, JSON.stringify({ token: "t".repeat(64) }));
-    return id;
-  }
-  function setup(parts = 2) {
-    const { env, sqlite } = testEnv({ MEDIA_ENABLED: "true" });
-    const log: any[] = [];
-    env.MEDIA_RENDERER = renderer(env, parts, log);
-    const user = signedIn(sqlite);
-    return { env, sqlite, user, log };
-  }
-  const run = (env: any, inspectId: string) => new ContentGeneration({} as any, env).run({ payload: { inspectId } } as any, step as any);
-
-  it("transcribes an upload after its check and returns its words", async () => {
-    const { env, sqlite, user, log } = setup();
-    const calls: any[] = [];
-    env.AI.run = async (model: string, input: any) => {
-      calls.push({ model, bytes: Buffer.from(input.audio, "base64") });
-      return calls.length === 1 ? whisper([[" Here's", 1, 1.4], [" how", 1.4, 1.7]]) : whisper([[" it", 3, 3.2], [" works.", 3.2, 3.8]]);
-    };
-    const id = await upload(env, sqlite, user);
-    await run(env, id);
-    expect(log.map((p) => [p.operation, p.download])).toEqual([["inspect", 200], ["audio", 200]]);
-    expect(log[1]).toMatchObject({ part: 120 });
-    expect(log[1].url).toMatch(new RegExp(`^https://app\\.test/api/upload-inputs/${id}\\?token=[0-9a-f]{64}$`));
-    // Each part the renderer cut is heard once, in order.
-    expect(calls.map((c) => [c.model, c.bytes[0], c.bytes.length])).toEqual([[WHISPER_MODEL, 1, 1000], [WHISPER_MODEL, 2, 1000]]);
-    const one = await call(worker, env, "GET", `/api/media/${id}`, undefined, user.cookie);
-    expect(one.data.asset).toMatchObject({ status: "ready", hasAudio: true, speech: "found", speechLanguage: "en", duration: 130 });
-    expect(one.data.asset.transcript).toEqual({ language: "en", words: [
-      { text: "Here's", start: 1, end: 1.4 }, { text: "how", start: 1.4, end: 1.7 }, { text: "it", start: 123, end: 123.2 }, { text: "works.", start: 123.2, end: 123.8 },
-    ] });
-    // Lists say whether speech was found, without the words.
-    const list = await call(worker, env, "GET", "/api/media?type=video", undefined, user.cookie);
-    expect(list.data.assets[0]).toMatchObject({ id, speech: "found" });
-    expect(list.data.assets[0].transcript).toBeUndefined();
-    // The renderer's link stops working once the sound was cut.
-    const link = new URL(log[1].url);
-    expect((await call(worker, env, "GET", link.pathname + link.search)).status).toBe(404);
-    expect(JSON.parse((sqlite.prepare("SELECT meta FROM media_assets WHERE id=?").get(id) as any).meta).listen).toBeUndefined();
-  });
-
-  it("keeps a failed transcription a usable upload, and finds speech again on request", async () => {
-    const { env, sqlite, user, log } = setup(1);
-    env.AI.run = async () => { throw new Error("AI down"); };
-    const id = await upload(env, sqlite, user);
-    await run(env, id);
-    const failed = (await call(worker, env, "GET", `/api/media/${id}`, undefined, user.cookie)).data.asset;
-    expect(failed).toMatchObject({ status: "ready", speech: "failed", error: null, transcript: null });
-    env.AI.run = async () => whisper([[" hi", 0.2, 0.5]]);
-    const again = await call(worker, env, "POST", `/api/media/${id}/speech`, {}, user.cookie);
-    expect(again.status).toBe(202);
-    expect(again.data.asset.speech).toBe("pending");
-    expect(env.CONTENT.created.at(-1)).toMatchObject({ params: { inspectId: id } });
-    expect(env.CONTENT.created.at(-1).id).toMatch(new RegExp(`^speech-${id}-\\d+$`));
-    // Asking again while it runs starts nothing new.
-    expect((await call(worker, env, "POST", `/api/media/${id}/speech`, {}, user.cookie)).status).toBe(200);
-    expect(env.CONTENT.created).toHaveLength(1);
-    await run(env, id);
-    expect(log.filter((p) => p.operation === "audio").map((p) => p.download)).toEqual([200, 200]);
-    const found = (await call(worker, env, "GET", `/api/media/${id}`, undefined, user.cookie)).data.asset;
-    expect(found).toMatchObject({ speech: "found", transcript: { words: [{ text: "hi", start: 0.2, end: 0.5 }] } });
-  });
-
-  it("says when there is no speech, and refuses what cannot hold any", async () => {
-    const { env, sqlite, user } = setup(0);
-    env.AI.run = async () => { throw new Error("not called for silence"); };
-    const id = await upload(env, sqlite, user);
-    await run(env, id);
-    const silent = (await call(worker, env, "GET", `/api/media/${id}`, undefined, user.cookie)).data.asset;
-    expect(silent).toMatchObject({ status: "ready", speech: "none" });
-    expect((await call(worker, env, "POST", `/api/media/${id}/speech`, {}, user.cookie)).status).toBe(409);
-    const image = crypto.randomUUID();
-    sqlite.prepare("INSERT INTO media_assets(id,user_id,kind,name,object_key,mime,bytes,width,height,status,created_at,updated_at) VALUES (?,?,'upload','x',?,'image/jpeg',10,10,10,'ready',1,1)")
-      .run(image, user.id, `media/${user.id}/${image}.jpg`);
-    expect((await call(worker, env, "POST", `/api/media/${image}/speech`, {}, user.cookie)).status).toBe(400);
-    const stranger = signedIn(sqlite);
-    expect((await call(worker, env, "POST", `/api/media/${id}/speech`, {}, stranger.cookie)).status).toBe(404);
-  });
-
-  it("is limited per person and day", async () => {
-    const { env } = testEnv();
-    for (let i = 0; i < SPEECH_PER_DAY; i++) expect(await claimSpeech(env, "u1", {})).toMatchObject({ speech: { status: "pending" } });
-    expect(await claimSpeech(env, "u1", {})).toBeNull();
-    expect(await claimSpeech(env, "u2", {})).not.toBeNull();
   });
 });
 

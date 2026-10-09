@@ -47,7 +47,7 @@ opens Blitz and starts the first batch of posts as soon as the brand analysis is
 
 ## Dashboard
 
-- Left sidebar: workspace switcher (logo + name), collapse button; Home, Blitz, Create, Inspiration, Automations,
+- Left sidebar: workspace switcher (logo + name), collapse button; Home, Blitz, Create, Clips, Inspiration, Automations,
   AI Studio, Creators (AI UGC), Content, Library, Calendar; then Upgrade, Brand, Accounts, Settings (and Admin).
 - Top bar (light lime): "Free trial · 6d 23h left" (or the plan and credits) and a lime **Upgrade** pill.
 - **Blitz**: one post card in the centre (9:16 video or slideshow, mute toggle), stacked behind it the next ones;
@@ -66,4 +66,13 @@ opens Blitz and starts the first batch of posts as soon as the brand analysis is
   **Subtitles** for a demo (or a wall of text's own clip with its sound kept) with speech: a switch and the same
   grid, or "Find speech" for an upload not yet listened to. Animation choices are small live tiles too. Every grid
   is a radio group (arrow keys move the choice); the chosen tile turns ink with a lime underline. With reduced motion
-  the samples and the preview show a still moment.
+  the samples and the preview show a still moment. A talking demo also offers **Remove pauses** (and "Filler words
+  too"), showing the length before and after; the preview skips the cut parts.
+- **Clip** tab of Create: edits a clip post (or a moment opened from the Clips page): the moment (start, length),
+  Remove pauses, Follow the speaker, the on-screen title and the caption style. The preview plays the kept parts and,
+  once the speaker was found, slides the wide picture as the render crops it.
+- **Clips** (`/app/clips`): 1. your long video (choose or upload; its speech is found for free up to 10 minutes, or
+  transcribed for the credits shown on the button), 2. the best moments (3, 5 or 8; each with its title, time, why it
+  works and what is said; Preview and Edit in Create), 3. make the clips (Remove pauses, Filler words too, Follow the
+  speaker, Hook title, caption style), **Send to Blitz**. The focused moment plays in a phone preview on the right
+  (on top on phones).

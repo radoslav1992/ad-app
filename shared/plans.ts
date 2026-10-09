@@ -1,7 +1,8 @@
-import { AVATAR_STEP, CLIP_CREDITS, CLIP_SECONDS, IMAGE_CREDITS, VOICE_CHARS, avatarRates } from "./credits";
+import { AVATAR_STEP, CLIP_CREDITS, CLIP_SECONDS, IMAGE_CREDITS, SPEECH_CREDIT_SECONDS, VOICE_CHARS, avatarRates } from "./credits";
 
 // Plans: the source of truth for prices and limits. The server enforces `posts` and `credits` per usage window
-// (D1 triggers), and `workspaces`, `accounts`, `scheduling` and `storageGb` in code.
+// (D1 triggers), and `workspaces`, `accounts`, `scheduling`, `storageGb` and the video upload limits (`videoMinutes`,
+// `videoMb`: long videos for clips on paid plans) in code.
 export const plans = [
   {
     id: "free",
@@ -13,6 +14,8 @@ export const plans = [
     accounts: 0,
     scheduling: false,
     storageGb: 1,
+    videoMinutes: 10,
+    videoMb: 500,
     description: "A 7-day trial: see what your brand looks like on short-form.",
     features: ["7-day free trial", "15 posts and 10 AI credits", "Blitz swipe review", "Download everything", "No credit card"],
   },
@@ -26,6 +29,8 @@ export const plans = [
     accounts: 4,
     scheduling: true,
     storageGb: 10,
+    videoMinutes: 120,
+    videoMb: 1900,
     description: "One brand, posting every day.",
     features: ["150 posts a month", "250 AI credits a month", "1 workspace", "4 social accounts", "Auto-publishing and calendar"],
   },
@@ -39,6 +44,8 @@ export const plans = [
     accounts: 30,
     scheduling: true,
     storageGb: 30,
+    videoMinutes: 120,
+    videoMb: 1900,
     description: "Several brands or accounts at full speed.",
     features: ["600 posts a month", "500 AI credits a month", "3 workspaces", "Up to 30 social accounts", "Everything in Starter"],
   },
@@ -52,6 +59,8 @@ export const plans = [
     accounts: 100,
     scheduling: true,
     storageGb: 100,
+    videoMinutes: 120,
+    videoMb: 1900,
     description: "Agencies and app studios running many accounts.",
     features: ["3,000 posts a month", "2,000 AI credits a month", "10 workspaces", "Up to 100 social accounts", "Everything in Growth"],
   },
@@ -66,7 +75,7 @@ export const planById = (id: string | undefined): Plan => plans.find((p) => p.id
 
 /** In every plan. */
 export const planIncludes = [
-  "Every format: slideshows, wall of text, hook & demo, green screen memes and AI UGC",
+  "Every format: slideshows, wall of text, hook & demo, green screen memes, AI UGC and clips from long videos",
   "Brand profile from your website",
   "Captions, music and your brand colours",
   "Commercial use of everything you make",
@@ -81,6 +90,10 @@ export const tariffs: readonly { name: string; text: string }[] = [
   {
     name: "Talking AI creator",
     text: `${avatarRates.library} credits per started ${AVATAR_STEP} seconds with a library character, ${avatarRates.custom} with your own character; plus the voice.`,
+  },
+  {
+    name: "Speech to text",
+    text: `Free for videos up to 10 minutes. Longer videos (for clips): 1 credit per started ${SPEECH_CREDIT_SECONDS / 60} minutes.`,
   },
 ];
 export const PRICE_NOTE = "Prices in US dollars, billed monthly. Taxes may apply at checkout.";

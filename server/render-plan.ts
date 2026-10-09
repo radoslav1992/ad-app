@@ -3,8 +3,10 @@ import { styledCaptions, type CaptionDocument, type CaptionWord } from "../share
 import { overlayItems, revealSeconds, type TextLook } from "../shared/overlay";
 import { motionFor } from "../shared/layers";
 import { clipWords } from "../shared/speech";
+import { cutWords, keptDuration, windowCuts, type KeepRange } from "../shared/cuts";
+import { trackWindow } from "../shared/track";
 import { FRAME, type ComposePayload, type ComposeSegment, type StillsPayload } from "../shared/render";
-import { HOOK_CLIP_MAX_SECONDS, type Spec, type Subtitles } from "../shared/formats";
+import { CLIP_TITLE_SECONDS, HOOK_CLIP_MAX_SECONDS, trackKey, type Cuts, type Spec, type Subtitles } from "../shared/formats";
 
 // A post's spec → renderer payloads. Pure: every referenced file is resolved beforehand (R2 key, length, sound) and
 // inputs are R2 keys here; the workflow turns them into capability links. Times are seconds on the output clock.
@@ -27,6 +29,8 @@ export type Plan = { compose: Omit<ComposePayload, "id" | "urls"> & { keys: stri
 const { width: W, height: H } = FRAME;
 const MAX_SECONDS = 180;
 const round = (n: number) => Math.round(n * 100) / 100;
+/** Word times keep the milliseconds of instant cuts (shared/cuts.ts), as the editor's preview does. */
+const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
 class Inputs {
   keys: string[] = [];
@@ -70,16 +74,31 @@ function coverMoment(at: number, value: string, look: TextLook, from: number, to
 }
 /**
  * What is said in the video `input` wherever the segments show it, on the output clock: each video segment shows
- * [trim, trim + duration) of its source from its own start (a looped clip repeats its words).
+ * [trim, trim + duration) of its source from its own start (a looped clip repeats its words), or, with instant cuts,
+ * the kept parts of its window joined (words a cut runs through are dropped).
  */
 export function spokenWords(segments: ComposeSegment[], input: number, words: CaptionWord[]): CaptionWord[] {
   const out: CaptionWord[] = [];
   let at = 0;
   for (const s of segments) {
-    if (s.kind === "video" && s.input === input) out.push(...clipWords(words, s.trim || 0, s.duration, at));
+    if (s.kind === "video" && s.input === input) {
+      const window = s.keep?.length ? s.keep.at(-1)![1] : s.duration;
+      out.push(...cutWords(clipWords(words, s.trim || 0, window, 0), s.keep || null).map((w) => ({ ...w, start: round3(w.start + at), end: round3(w.end + at) })));
+    }
     at += s.duration;
   }
   return out;
+}
+/**
+ * A video segment showing [start, start + length) of a source with its speech `words`: with cuts on and speech found,
+ * only the kept parts (the same ranges the editor previews); `follow` crops it around the speaker's path.
+ */
+function talkingSegment(input: number, start: number, length: number, words: CaptionWord[] | undefined, cuts: Cuts, audio: number, follow: [number, number][] = []): ComposeSegment {
+  const keep: KeepRange[] | null = cuts.enabled && words?.length ? windowCuts(words, start, length, { maxPause: 0.6, fillers: cuts.fillers }) : null;
+  return {
+    kind: "video", input, trim: start, duration: keep ? keptDuration(keep, length) : round(length), audio,
+    ...(keep && { keep }), ...(follow.length && { follow }),
+  };
 }
 /** Subtitles of the speech in `media` where the segments show it, when they are switched on and words were found. */
 function subtitles(ass: string, settings: Subtitles, media: Media, input: number, segments: ComposeSegment[], position: CaptionDocument["position"] = "bottom") {
@@ -154,13 +173,34 @@ export function planRender(spec: Spec, ctx: PlanContext): Plan {
       }
       const demo = need(ctx, spec.demo.assetId);
       const start = Math.min(spec.demo.start, Math.max(0, demo.duration - 1));
-      const length = round(Math.max(1, Math.min(spec.demo.seconds, demo.duration - start || spec.demo.seconds)));
-      segments.push({ kind: "video", input: inputs.add(demo.key), trim: start, duration: length, audio: 0 });
+      const window = round(Math.max(1, Math.min(spec.demo.seconds, demo.duration - start || spec.demo.seconds)));
+      // A talking demo can lose its pauses (instant cuts); its subtitles follow the cuts.
+      const part = talkingSegment(inputs.add(demo.key), start, window, demo.words, spec.cuts, 0);
+      const length = part.duration;
+      segments.push(part);
       ass = text(ass, spec.hook, spec.look, 0, hook);
       ass = text(ass, spec.demoText, { ...spec.look, position: "top" }, hook, hook + length);
       // What is said in the used part of the demo, under the demo caption.
       ass = subtitles(ass, spec.subtitles, demo, inputs.add(demo.key), segments);
       coverAt = coverMoment(Math.min(1, hook / 2), spec.hook, spec.look, 0, hook);
+      break;
+    }
+    case "clip": {
+      // The moment of a long video: cut (pauses, fillers), cropped to 9:16 around the speaker, its own sound, its
+      // captions, and the hook title over the first seconds.
+      const video = need(ctx, spec.source.assetId);
+      const start = Math.min(spec.source.start, Math.max(0, video.duration - 1));
+      const window = round(Math.max(1, Math.min(spec.source.end, video.duration || spec.source.end) - start));
+      const tracked = spec.follow && spec.tracked?.key === trackKey(spec) ? spec.tracked.track.points : [];
+      segments = [talkingSegment(inputs.add(video.key), start, window, video.words, spec.cuts, 1, trackWindow(tracked, start, window))];
+      const d = segments[0].duration;
+      if (spec.captions.enabled && video.words?.length) {
+        const words = spokenWords(segments, 0, video.words);
+        if (words.length) ass = captionAss(styledCaptions(words, spec.captions.style));
+      }
+      ass = text(ass, spec.hook, spec.hookLook, 0, Math.min(CLIP_TITLE_SECONDS, d));
+      duck = [[0, d]];
+      coverAt = coverMoment(Math.min(1.2, d / 2), spec.hook, spec.hookLook, 0, Math.min(CLIP_TITLE_SECONDS, d));
       break;
     }
     case "ugc": {

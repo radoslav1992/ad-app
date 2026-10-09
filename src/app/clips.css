@@ -1,0 +1,26 @@
+/* The Clips page: the steps on the left, the focused moment's preview (a phone) on the right. */
+.clips { max-width: 1240px; }
+.clips-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 22px; align-items: start; }
+.clips h2 { font-size: 18px; display: flex; align-items: center; gap: 8px; }
+.clips-video { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+.clips-video video { width: 96px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 10px; background: #0b0d12; }
+.clips-video > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.clips-video strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clips-speech { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; background: #fafbfc; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.clips-speech p { display: flex; gap: 8px; align-items: flex-start; margin: 0; }
+.moments { display: flex; flex-direction: column; gap: 10px; }
+.moment { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; border: 1px solid var(--line); border-radius: 14px; padding: 12px; background: #fff; }
+.moment.on { border-color: var(--navy); box-shadow: 0 0 0 3px rgba(30, 36, 51, 0.1); }
+.moment-pick { padding-top: 2px; }
+.moment-pick input { width: 18px; height: 18px; accent-color: var(--navy); }
+.moment-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.moment-body p { margin: 0; }
+.moment-text { color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.clips-option { gap: 14px; }
+.clips-preview { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 8px; }
+.clips-preview .phone-frame.placeholder p { margin: 0; }
+@media (max-width: 980px) {
+  .clips-layout { grid-template-columns: 1fr; }
+  .clips-preview { position: static; max-width: 320px; width: 100%; margin: 0 auto; order: -1; }
+}
+@media (max-width: 560px) { .clips-video { grid-template-columns: 72px minmax(0, 1fr); } .clips-video video { width: 72px; } .clips-video .btn { grid-column: 1 / -1; } }

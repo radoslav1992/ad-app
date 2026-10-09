@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, RefreshCw, Shuffle, Sparkles, Trash2, Wand2, ChevronLeft, ChevronRight, Lightbulb, Save, VolumeX, Volume2, AudioLines } from "lucide-react";
+import { Plus, RefreshCw, Shuffle, Sparkles, Trash2, Wand2, ChevronLeft, ChevronRight, Lightbulb, Save, VolumeX, Volume2, AudioLines, Scissors } from "lucide-react";
 import { api, errorText, fileUrl, newKey, post, put, usePoll, useAuth, type Asset, type Character, type LibraryItem, type Post } from "../lib";
 import { useCurrentWorkspace } from "./workspace";
 import { TextPreview, type PreviewBackground, type TextBlock } from "./TextPreview";
 import { CaptionStylePicker, EditorSection, TextAnimationPicker } from "./CaptionPickers";
 import { MediaPicker, LibraryPicker } from "./pickers";
 import { CreatorField } from "./creators";
+import { ClipInspector, ClipPreview, CutsField, previewCuts } from "./clip-editor";
 import { Switch, useToast } from "../ui";
-import { formatIds, formats, recordingCurrent, specCredits, specSchema, HOOK_CLIP_MAX_SECONDS, type FormatId, type Spec, type Subtitles } from "../../shared/formats";
+import { postFormatIds, formats, recordingCurrent, specCredits, specSchema, CLIP_TITLE_SECONDS, HOOK_CLIP_MAX_SECONDS, type ClipSpec, type PostFormatId, type Spec, type Subtitles } from "../../shared/formats";
 import { hookPatterns, writingStyles, writingStyleIds, type WritingStyle } from "../../shared/hooks";
 import { textPresets, type TextLook } from "../../shared/overlay";
 import { styledCaptions, type CaptionDocument, type CaptionWord } from "../../shared/captions";
-import { clipWords, loopedWords, type SpeechStatus } from "../../shared/speech";
+import { clipWords, loopedWords, LONG_VIDEO_SECONDS, type SpeechStatus } from "../../shared/speech";
+import { cutWords, keptDuration } from "../../shared/cuts";
 import { voices } from "../../shared/voices";
 import { creditsLabel } from "../../shared/credits";
 import "./create.css";
@@ -21,11 +23,14 @@ import "./create.css";
 // in the background and is approved). Also edits existing posts (?post=<id>). The preview plays the post's text
 // animation and captions as rendered; the caption styles and a clip's subtitles are chosen under it.
 
-/** A file in the post as the editor knows it; own videos and tracks also bring their speech (word timings). */
-type Picked = { url: string; kind: "image" | "video" | "audio"; name: string; duration?: number; speech?: SpeechStatus | null; words?: CaptionWord[] };
+/**
+ * A file in the post as the editor knows it; own videos and tracks also bring their speech (word timings), a long
+ * video only for the part around a clip's moment (`range`).
+ */
+type Picked = { url: string; kind: "image" | "video" | "audio"; name: string; duration?: number; speech?: SpeechStatus | null; words?: CaptionWord[]; range?: [number, number] };
 type MediaAsset = Asset & { speech?: SpeechStatus | null; transcript?: { language: string; words: CaptionWord[] } | null };
 type Picker = null | { type: "image" | "video" | "audio"; target: string } | { library: "clip" | "greenscreen" | "music"; target: string };
-const blankSpec = (format: FormatId, accent: string): Spec | null => {
+const blankSpec = (format: PostFormatId, accent: string): Spec | null => {
   const parsed = specSchema.safeParse(
     format === "slideshow" ? { format, slides: [{ text: "Your hook here", image: { color: accent } }, { text: "Your point here", image: { color: accent } }], look: textPresets.box.look }
       : format === "text" ? { format, text: "your thought here", background: { color: accent } }
@@ -41,7 +46,7 @@ export function Create() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const editing = params.get("post");
-  const [format, setFormat] = useState<FormatId>((params.get("format") as FormatId) || "slideshow");
+  const [format, setFormat] = useState<PostFormatId>((params.get("format") as PostFormatId) || "slideshow");
   const [mode, setMode] = useState<"new" | "remix">(params.get("pattern") ? "remix" : "new");
   const [pattern, setPattern] = useState<string | null>(params.get("pattern"));
   const [mention, setMention] = useState(true);
@@ -62,10 +67,10 @@ export function Create() {
   const [saveKey, setSaveKey] = useState(newKey);
 
   const remember = useCallback((id: string, item: Picked) => setMedia((m) => ({ ...m, [id]: item })), []);
-  /** One own file, with its speech (the media list has no transcripts). */
-  const loadAsset = useCallback(async (id: string) => {
-    const { asset } = await api<{ asset: MediaAsset }>(`/media/${id}`);
-    remember(id, { url: asset.url, kind: asset.mime.split("/")[0] as Picked["kind"], name: asset.name, duration: asset.duration, speech: asset.speech ?? null, words: asset.transcript?.words });
+  /** One own file, with its speech (the media list has no transcripts); of a long video, the words in `range`. */
+  const loadAsset = useCallback(async (id: string, range?: [number, number]) => {
+    const { asset } = await api<{ asset: MediaAsset }>(`/media/${id}${range ? `?from=${range[0]}&to=${range[1]}` : ""}`);
+    remember(id, { url: asset.url, kind: asset.mime.split("/")[0] as Picked["kind"], name: asset.name, duration: asset.duration, speech: asset.speech ?? null, words: asset.transcript?.words, range });
   }, [remember]);
   // What referenced media looks like in the preview: own files from the media API, shared items from the library.
   const resolve = useCallback(async (s: Spec) => {
@@ -75,6 +80,7 @@ export function Create() {
     if (s.format === "text" && s.background.libraryId) libs.add(s.background.libraryId);
     if (s.format === "green_screen") libs.add(s.clipId);
     if (s.format === "hook_demo") { ids.add(s.demo.assetId); if ("libraryId" in s.hookClip) libs.add(s.hookClip.libraryId); }
+    if (s.format === "clip" && !media[s.source.assetId]) await loadAsset(s.source.assetId, clipRange(s)).catch(() => { /* shown as missing */ });
     for (const id of ids) if (!media[id]) await loadAsset(id).catch(() => { /* shown as missing */ });
     if ([...libs].some((id) => !media[id])) {
       try {
@@ -97,7 +103,14 @@ export function Create() {
   }, [editing]);
   useEffect(() => {
     if (editing || spec) return;
-    setSpec(blankSpec(format, workspace.profile.colors.primary));
+    // A moment from the Clips page (?format=clip&asset=…&start=…&end=…&title=…) opens as a clip to fine-tune.
+    const moment = format === "clip" ? specSchema.safeParse({
+      format, source: { assetId: params.get("asset"), start: Number(params.get("start")), end: Number(params.get("end")) }, hook: params.get("title") || "", title: params.get("title") || "",
+      cuts: { enabled: true, fillers: true }, topic: "Clip",
+    }) : null;
+    const next = moment?.success ? moment.data : blankSpec(format, workspace.profile.colors.primary);
+    setSpec(next);
+    if (next?.format === "clip") { setTab("preview"); void resolve(next); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [format]);
 
@@ -153,8 +166,8 @@ export function Create() {
     }
   };
   const change = (next: Partial<Spec>) => spec && setSpec({ ...spec, ...next } as Spec);
-  const look: TextLook | null = spec && "look" in spec ? spec.look : spec?.format === "ugc" ? spec.hookLook : null;
-  const setLook = (l: TextLook) => spec && (spec.format === "ugc" ? change({ hookLook: l } as Partial<Spec>) : change({ look: l } as Partial<Spec>));
+  const look: TextLook | null = spec && "look" in spec ? spec.look : spec?.format === "ugc" || spec?.format === "clip" ? spec.hookLook : null;
+  const setLook = (l: TextLook) => spec && (spec.format === "ugc" || spec.format === "clip" ? change({ hookLook: l } as Partial<Spec>) : change({ look: l } as Partial<Spec>));
   // AI UGC captions: the recording's words, or a timed sample of the script's start until it is recorded.
   const script = spec?.format === "ugc" ? spec.script : "";
   const sample = useMemo(() => sampleWords(script), [script]);
@@ -167,6 +180,13 @@ export function Create() {
   const speechClip = picked(speechId);
   // While its speech is being found, check again every few seconds.
   usePoll(() => { if (speechId) void loadAsset(speechId).catch(() => {}); }, 4000, speechClip?.speech === "pending");
+  // A clip's video: the words around its moment, loaded again when the moment moves out of them.
+  const clipSource = spec?.format === "clip" ? picked(spec.source.assetId) : undefined;
+  useEffect(() => {
+    if (spec?.format !== "clip" || !clipSource?.range) return;
+    const [from, to] = clipSource.range;
+    if (spec.source.start < from || spec.source.end > to) void loadAsset(spec.source.assetId, clipRange(spec)).catch(() => {});
+  }, [spec, clipSource?.range, loadAsset]);
   const [finding, setFinding] = useState(false);
   const findSpeech = async () => {
     if (!speechId) return;
@@ -220,15 +240,18 @@ export function Create() {
       if (part === "demo") {
         const demo = picked(spec.demo.assetId);
         const start = Math.min(spec.demo.start, Math.max(0, (demo?.duration || 0) - 1));
-        const length = Math.max(1, Math.min(spec.demo.seconds, (demo?.duration || spec.demo.seconds + start) - start));
+        const window = Math.max(1, Math.min(spec.demo.seconds, (demo?.duration || spec.demo.seconds + start) - start));
+        // With pauses removed, only the kept parts play (as the render joins them) and the subtitles follow.
+        const keep = previewCuts(demo?.words || [], start, window, spec.cuts), length = keptDuration(keep, window);
         return <TextPreview blocks={[block(spec.demoText, { ...look, position: "top" }, length)]} seconds={length} replay={replay}
-          background={demo ? { url: demo.url, kind: "video", start } : { color: "#1e2433" }} videoClock={!!demo} sound
-          captions={subtitleCaptions(spec.subtitles, demo?.words ? clipWords(demo.words, start, length, 0) : [])} />;
+          background={demo ? { url: demo.url, kind: "video", start, keep: keep?.map(([a, b]) => [a + start, b + start]) } : { color: "#1e2433" }} videoClock={!!demo} sound
+          captions={subtitleCaptions(spec.subtitles, demo?.words ? cutWords(clipWords(demo.words, start, window, 0), keep) : [])} />;
       }
       const clip = "libraryId" in spec.hookClip ? picked(spec.hookClip.libraryId) : null;
       const seconds = Math.min(clip?.duration || 3, HOOK_CLIP_MAX_SECONDS);
       return <TextPreview blocks={[block(spec.hook, look, seconds)]} seconds={seconds} replay={replay} background={clip ? { url: clip.url, kind: "video" } : { color: "#1e2433" }} />;
     }
+    if (spec.format === "clip") return <ClipPreview spec={spec} source={clipSource ? { url: clipSource.url, duration: clipSource.duration || 0, words: clipSource.words || [] } : null} />;
     // AI UGC: the made recording with its real word timings, or the creator's picture with a sample of the script.
     if (recordingCurrent(spec) && spec.generated?.videoAssetId && spec.generated.words.length) {
       return <TextPreview blocks={[block(spec.hook, look, 3)]} seconds={existing?.duration || 600} videoClock sound replay={replay}
@@ -243,7 +266,7 @@ export function Create() {
   return (
     <main className="page create">
       <div className="format-tabs" role="tablist" aria-label="Format">
-        {formatIds.map((f) => (
+        {postFormatIds.map((f) => (
           <button key={f} role="tab" aria-selected={format === f} disabled={!!editing && format !== f}
             onClick={() => { setFormat(f); setSpec(blankSpec(f, workspace.profile.colors.primary)); setSlide(0); }}>{formats[f].name}</button>
         ))}
@@ -251,7 +274,14 @@ export function Create() {
       <h1 className="sr-only">{editing ? "Edit post" : "Create a post"}</h1>
       <div className="create-grid">
         <section className="create-left" aria-label="What to make">
-          {!editing && (
+          {!editing && format === "clip" && (
+            <div className="card flat stack">
+              <strong><Scissors size={16} aria-hidden="true" /> Clips from a long video</strong>
+              <p className="muted small">Upload a podcast, webinar or demo call on the Clips page. We find its strongest moments and each becomes a vertical clip that follows the speaker, with captions.</p>
+              <Link className="btn primary" to="/app/clips">Find moments in a video</Link>
+            </div>
+          )}
+          {!editing && format !== "clip" && (
             <>
               <div className="card flat">
                 <span className="label">Mode</span>
@@ -336,7 +366,7 @@ export function Create() {
               </button>
             </div>
           </div>
-          {tab === "inspiration" && !editing ? (
+          {tab === "inspiration" && !editing && format !== "clip" ? (
             <div className="patterns">
               {hookPatterns.filter((p) => p.formats.includes(format)).map((p) => (
                 <article key={p.id} className={`pattern${pattern === p.id ? " on" : ""}`}>
@@ -367,11 +397,19 @@ export function Create() {
                   )}
                 </div>
                 <Inspector spec={spec} look={look} setLook={setLook} slide={slide} setSlide={setSlide} onChange={change}
-                  pick={(p) => setPicker(p)} aiPrompts={aiPrompts} addCharacter={(c) => setCharacters((l) => [c, ...l.filter((x) => x.id !== c.id)])} demoSeconds={picked(spec.format === "hook_demo" ? spec.demo.assetId : undefined)?.duration} />
+                  pick={(p) => setPicker(p)} aiPrompts={aiPrompts} addCharacter={(c) => setCharacters((l) => [c, ...l.filter((x) => x.id !== c.id)])} demoSeconds={picked(spec.format === "hook_demo" ? spec.demo.assetId : undefined)?.duration}
+                  demoWords={spec.format === "hook_demo" ? picked(spec.demo.assetId)?.words : undefined}
+                  clipSource={clipSource ? { url: clipSource.url, duration: clipSource.duration || 0, words: clipSource.words || [] } : null} />
               </div>
               {spec.format === "ugc" && (
                 <EditorSection title="Captions" hint="Word-by-word captions of what your creator says. The preview plays a sample until the voice is recorded.">
                   <CaptionStylePicker value={spec.captionStyle} onChange={(captionStyle) => change({ captionStyle } as Partial<Spec>)} />
+                </EditorSection>
+              )}
+              {spec.format === "clip" && (
+                <EditorSection title="Captions" hint={clipSource?.words?.length ? "Word-by-word captions of what's said, timed to the voice." : "Captions appear once the video's speech is found."}
+                  action={<Switch checked={spec.captions.enabled} onChange={(enabled) => change({ captions: { ...spec.captions, enabled } } as Partial<Spec>)} label="Show captions" />}>
+                  {spec.captions.enabled && <CaptionStylePicker value={spec.captions.style} onChange={(style) => change({ captions: { ...spec.captions, style } } as Partial<Spec>)} />}
                 </EditorSection>
               )}
               {(spec.format === "hook_demo" || spec.format === "text") && speechClip && speechClip.kind === "video" && (
@@ -382,7 +420,7 @@ export function Create() {
               )}
             </>
           ) : (
-            <div className="empty"><Sparkles size={28} /><p>{format === "ugc" || format === "hook_demo" || format === "green_screen" ? "Choose your media on the left, then Generate." : "Generate a draft, or start typing on the left."}</p></div>
+            <div className="empty"><Sparkles size={28} /><p>{format === "clip" ? "Pick a moment of a long video on the Clips page to edit it here." : format === "ugc" || format === "hook_demo" || format === "green_screen" ? "Choose your media on the left, then Generate." : "Generate a draft, or start typing on the left."}</p></div>
           )}
         </section>
       </div>
@@ -437,6 +475,11 @@ function TextFields({ spec, slide, onChange }: { spec: Spec; slide: number; onCh
           )}
         </>
       )}
+      {spec.format === "clip" && (
+        <label className="field"><span>On-screen title <span className="muted small">(first {CLIP_TITLE_SECONDS} seconds)</span></span>
+          <input className="input" maxLength={140} value={spec.hook} onChange={(e) => onChange({ hook: e.target.value })} />
+        </label>
+      )}
       {spec.format === "ugc" && (
         <>
           <label className="field"><span>Script <span className="muted small">(spoken; {spec.script.length}/900)</span></span>
@@ -486,11 +529,13 @@ function SubtitlesSection({ clip, subtitles, soundKept, where, finding, onFind, 
 }
 
 /** The editor's right-hand controls: text look, media swaps, slides, sound. */
-function Inspector({ spec, look, setLook, slide, setSlide, onChange, pick, aiPrompts, addCharacter, demoSeconds }: {
+function Inspector({ spec, look, setLook, slide, setSlide, onChange, pick, aiPrompts, addCharacter, demoSeconds, demoWords, clipSource }: {
   spec: Spec; look: TextLook; setLook: (l: TextLook) => void; slide: number; setSlide: (n: number) => void; onChange: (s: Partial<Spec>) => void;
   pick: (p: Picker) => void; aiPrompts: number; addCharacter: (c: Character) => void;
-  /** Length of the chosen demo video, when known. */
-  demoSeconds?: number;
+  /** Length of the chosen demo video, when known, and the words heard in it. */
+  demoSeconds?: number; demoWords?: CaptionWord[];
+  /** A clip's video, with the words around its moment. */
+  clipSource: Parameters<typeof ClipInspector>[0]["source"];
 }) {
   const range = (label: string, value: number, min: number, max: number, stepSize: number, set: (v: number) => void, unit = "") => (
     <label className="field"><span className="small">{label}: {unit === "x" ? `${Math.round(value * 100)}%` : `${value}${unit}`}</span>
@@ -555,10 +600,16 @@ function Inspector({ spec, look, setLook, slide, setSlide, onChange, pick, aiPro
         <div className="stack" style={{ gap: 8 }}>
           <button className="btn sm" onClick={() => pick({ library: "clip", target: "hookClip" })}>Swap hook clip</button>
           <button className="btn sm" onClick={() => pick({ type: "video", target: "demo" })}>Swap demo video</button>
-          {range("Demo starts at", spec.demo.start, 0, demoSeconds ? Math.max(0, Math.min(600, Math.floor(demoSeconds - 2))) : Math.max(60, spec.demo.start), 0.5, (v) => onChange({ demo: { ...spec.demo, start: v } }), "s")}
+          {range("Demo starts at", spec.demo.start, 0, demoSeconds ? Math.max(0, Math.min(LONG_VIDEO_SECONDS, Math.floor(demoSeconds - 2))) : Math.max(60, spec.demo.start), 0.5, (v) => onChange({ demo: { ...spec.demo, start: v } }), "s")}
           {range("Demo length", spec.demo.seconds, 2, 45, 1, (v) => onChange({ demo: { ...spec.demo, seconds: v } }), "s")}
+          {/* A talking demo can lose its pauses (and filler words). */}
+          {!!demoWords?.length && (
+            <CutsField cuts={spec.cuts} onChange={(cuts) => onChange({ cuts } as Partial<Spec>)} before={spec.demo.seconds}
+              after={keptDuration(previewCuts(demoWords, spec.demo.start, spec.demo.seconds, spec.cuts), spec.demo.seconds)} />
+          )}
         </div>
       )}
+      {spec.format === "clip" && <ClipInspector spec={spec} source={clipSource} onChange={(c) => onChange(c as Partial<Spec>)} />}
       {spec.format === "ugc" && (
         <div className="stack" style={{ gap: 8 }}>
           <CreatorField value={spec.characterId} onChange={(id, c) => { addCharacter(c); onChange({ characterId: id }); }} />
@@ -580,6 +631,8 @@ function Inspector({ spec, look, setLook, slide, setSlide, onChange, pick, aiPro
   );
 }
 
+/** The part of a clip's video whose words the editor loads: the moment and ten minutes either side. */
+const clipRange = (s: ClipSpec): [number, number] => [Math.max(0, Math.floor(s.source.start - 600)), Math.ceil(s.source.end + 600)];
 /** Subtitles to preview: the words of the used part of a clip, in the chosen style (null when they are off). */
 function subtitleCaptions(settings: Subtitles | null, words: CaptionWord[], position: CaptionDocument["position"] = "bottom"): CaptionDocument | null {
   return settings?.enabled && words.length ? styledCaptions(words, settings.style, position) : null;

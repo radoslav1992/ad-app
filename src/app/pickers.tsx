@@ -45,6 +45,7 @@ import { Link } from "react-router-dom";
 import { AlertCircle, Check, CheckCircle2, ChevronLeft, ChevronRight, Music, Pause, Play, Search, Upload, UploadCloud } from "lucide-react";
 import { Modal, Spinner, useToast } from "../ui";
 import { errorText, newKey, seconds, uploadFile, useApi, useAuth, bytes as formatBytes, type Asset, type LibraryItem, type User } from "../lib";
+import { planById } from "../../shared/plans";
 import "./pages.css";
 
 export type MediaType = "image" | "video" | "audio";
@@ -258,8 +259,9 @@ const types: Record<string, MediaType> = {
   "video/mp4": "video", "video/quicktime": "video", "video/webm": "video",
   "audio/mpeg": "audio", "audio/wav": "audio", "audio/x-wav": "audio", "audio/mp4": "audio", "audio/x-m4a": "audio", "audio/aac": "audio", "audio/ogg": "audio",
 };
-/** The server's limits per type (server/media.ts). */
+/** The server's limits per type (server/media.ts); videos follow the plan (long videos for clips on paid plans). */
 const limits: Record<MediaType, number> = { image: 20 * MB, video: 500 * MB, audio: 50 * MB };
+const limitFor = (type: MediaType, plan?: string) => (type === "video" ? planById(plan).videoMb * MB : limits[type]);
 export const ACCEPT: Record<MediaType | "any", string> = {
   image: "image/jpeg,image/png,image/webp",
   video: "video/mp4,video/quicktime,video/webm,.mov",
@@ -284,9 +286,10 @@ export type Upload = {
 export type Uploads = ReturnType<typeof useUploads>;
 export function useUploads(workspaceId?: string, options: { only?: MediaType; onDone?: (asset: Asset) => void; concurrency?: number } = {}) {
   const [items, setItems] = useState<Upload[]>([]);
-  const settings = useRef({ workspaceId, ...options });
+  const plan = useAuth().user?.plan;
+  const settings = useRef({ workspaceId, plan, ...options });
   useLayoutEffect(() => {
-    settings.current = { workspaceId, ...options };
+    settings.current = { workspaceId, plan, ...options };
   });
   const queue = useRef<{ key: string; file: File }[]>([]);
   const active = useRef(0);
@@ -320,7 +323,8 @@ export function useUploads(workspaceId?: string, options: { only?: MediaType; on
       const problem = !type
         ? only ? `Choose ${typeWords[only].one} file.` : "This file type isn't supported. Upload JPG, PNG or WebP images, MP4, MOV or WebM videos, or MP3, WAV, M4A or OGG tracks."
         : only && type !== only ? `Choose ${typeWords[only].one} file.`
-        : file.size > limits[type] ? `${typeWords[type].many} can be up to ${limits[type] / MB} MB.`
+        : file.size > limitFor(type, settings.current.plan)
+          ? `${typeWords[type].many} can be up to ${limitFor(type, settings.current.plan) / MB} MB${type === "video" && planById(settings.current.plan).id === "free" ? " on the free trial (paid plans take videos up to 2 hours)" : ""}.`
         : file.size < 24 ? "This file is empty." : null;
       const key = newKey();
       fresh.push({ key, name: file.name, bytes: file.size, type, progress: 0, status: problem ? "failed" : "queued", error: problem, asset: null });

@@ -14,20 +14,22 @@ import { avatarVideoStatus, deleteAvatarVideo, submitAvatarVideo, type HeyGenTic
 import { releaseRender, renderFailures, renderFile, renderStatus, submitRender } from "./renderer";
 import { planRender, type Media, type PlanContext } from "./render-plan";
 import { failAsset } from "./media";
-import { claimSpeech, mayHaveSpeech, SPEECH_PART_SECONDS, transcribe } from "./speech";
+import { claimSpeech, mayHaveSpeech, storedTranscript, transcribe } from "./speech";
 import { SPEECH_MAX_SECONDS } from "../shared/speech";
 import { workspaceSettings } from "./workspaces";
 import { workspaceProfile } from "./ideas";
 import {
-  pendingMedia, recordingCurrent, recordingKey, referencedAssets, referencedLibrary, specSchema, talking, type Spec,
+  pendingMedia, recordingCurrent, recordingKey, referencedAssets, referencedLibrary, specSchema, talking, trackKey, type ClipSpec, type Spec,
 } from "../shared/formats";
+import { trackSchema, type Track } from "../shared/track";
 import type { RenderPayload, RenderStatus } from "../shared/render";
 import { IMAGE_CREDITS } from "../shared/credits";
 
-// A run makes a post ready: AI images/clips it asks for, the talking creator (voice, then lip-synced video), then the
-// render (video, cover and, for slideshows, the slides as pictures). Paid provider calls are made once: a claim is
-// stored before each call and its ticket right after, so a retried step polls the existing job instead of paying
-// again; a claim without a ticket (the answer was lost) fails the run and refunds the credits.
+// A run makes a post ready: AI images/clips it asks for, the talking creator (voice, then lip-synced video), where a
+// clip's speaker is, then the render (video, cover and, for slideshows, the slides as pictures). A run of kind
+// "speech" transcribes a long video for credits. Paid provider calls are made once: a claim is stored before each
+// call and its ticket right after, so a retried step polls the existing job instead of paying again; a claim without
+// a ticket (the answer was lost) fails the run and refunds the credits.
 
 type RunState = {
   token?: string;
@@ -101,6 +103,7 @@ export class ContentGeneration extends WorkflowEntrypoint<Env, { runId?: string;
     const phase = (value: string) => e.DB.prepare("UPDATE runs SET phase=?,updated_at=? WHERE id=?").bind(value, now(), id).run();
     try {
       if (run.kind === "post") await makePost(e, step, run, phase);
+      else if (run.kind === "speech") await findSpeech(e, step, String(run.payload.assetId), true);
       else await makeStandalone(e, step, run, phase);
       await step.do("complete", async () => {
         await e.DB.prepare("UPDATE runs SET status='completed',phase='done',updated_at=? WHERE id=? AND status='running'").bind(now(), id).run();
@@ -199,6 +202,8 @@ async function makePost(e: Env, step: WorkflowStep, run: RunInfo, phase: Phase) 
   // The talking creator: voice, then the lip-synced video.
   const t = talking(first);
   if (t && !recordingCurrent(first)) await makeRecording(e, step, run, t, workspace, phase);
+  // A clip follows its speaker: where they are in its moment is measured once and kept with the post.
+  if (first.format === "clip" && first.follow && first.tracked?.key !== trackKey(first)) await trackMoment(e, step, run, first, phase);
   // The render.
   const { spec } = await step.do("spec-final", () => loadSpec(e, postId));
   const ctx = await step.do("resolve", () => resolveContext(e, run.user_id, spec, workspace));
@@ -307,14 +312,47 @@ async function makeRecording(e: Env, step: WorkflowStep, run: RunInfo, t: { char
   }));
 }
 
+/**
+ * "Follow the speaker" for a clip: the renderer finds the main face in the clip's moment (free). The path is kept
+ * with the post (`tracked`); a failure only leaves the picture centred, and the next render tries again.
+ */
+async function trackMoment(e: Env, step: WorkflowStep, run: RunInfo, spec: ClipSpec, phase: Phase) {
+  const source = await step.do("track-source", async () =>
+    e.DB.prepare("SELECT object_key,width,height,duration FROM media_assets WHERE id=? AND user_id=? AND status='ready'").bind(spec.source.assetId, run.user_id).first<any>());
+  if (!source) throw new Error("MEDIA_INPUT");
+  let track: Track | null = { v: 1, points: [] };
+  // A video no wider than the 9:16 frame is never cropped: there is nobody to follow.
+  if (source.width > (source.height * 9) / 16 * 1.01) {
+    const payload = await step.do("track-payload", async (): Promise<RenderPayload> => {
+      const start = Math.min(spec.source.start, Math.max(0, source.duration - 1));
+      return { id: uid(), operation: "track", url: await inputUrl(e, run.id, source.object_key), start, length: Math.max(1, Math.min(spec.source.end, source.duration) - start) };
+    });
+    try {
+      await phase("tracking");
+      const { slot, result } = await rendererJob(e, step, "track", payload, 120, "8 seconds");
+      await step.do("track-release", () => releaseRender(e, slot, payload.id));
+      const parsed = trackSchema.safeParse(result.track);
+      track = parsed.success ? parsed.data : null;
+    } catch (error) {
+      console.warn("Speaker not tracked", { runId: run.id, code: error instanceof Error && /^[A-Z_]{3,40}$/.test(error.message) ? error.message : "INTERNAL" });
+      track = null;
+    }
+  }
+  if (track) await step.do("track-apply", () => updateSpec(e, run.post_id!, (s) => { s.tracked = { key: trackKey(spec), track }; }));
+}
+
 /** Every file the render reads, resolved to its R2 key and length (owner's files, library items, the recording). */
 async function resolveContext(e: Env, userId: string, spec: Spec, workspace: any): Promise<PlanContext> {
   const media: Record<string, Media> = {};
   const assets = referencedAssets(spec);
+  // Own videos bring the words heard in them (subtitles, captions and cuts).
   if (assets.length)
-    for (const a of (await e.DB.prepare(`SELECT id,object_key,mime,duration,kind FROM media_assets WHERE user_id=? AND status='ready' AND id IN (${assets.map(() => "?").join(",")})`)
+    for (const a of (await e.DB.prepare(`SELECT id,object_key,mime,duration,kind,meta FROM media_assets WHERE user_id=? AND status='ready' AND id IN (${assets.map(() => "?").join(",")})`)
       .bind(userId, ...assets).all<any>()).results)
-      media[a.id] = { key: a.object_key, kind: a.mime.split("/")[0], duration: a.duration, ai: ["ai_image", "ai_clip", "avatar", "portrait"].includes(a.kind) };
+      media[a.id] = {
+        key: a.object_key, kind: a.mime.split("/")[0], duration: a.duration, ai: ["ai_image", "ai_clip", "avatar", "portrait"].includes(a.kind),
+        ...(a.mime.startsWith("video/") && { words: storedTranscript(a.meta)?.words }),
+      };
   const items = referencedLibrary(spec);
   if (items.length)
     for (const l of (await e.DB.prepare(`SELECT id,object_key,mime,duration,tags FROM library_items WHERE id IN (${items.map(() => "?").join(",")})`).bind(...items).all<any>()).results)
@@ -406,17 +444,21 @@ async function inspectUpload(e: Env, step: WorkflowStep, assetId: string) {
   if (!asset) return;
   if (asset.status === "ready") return findSpeech(e, step, asset.id);
   const meta = json<any>(asset.meta, {});
-  const payload: RenderPayload = { id: asset.id, operation: "inspect", url: `${siteUrl(e)}/api/upload-inputs/${asset.id}?token=${meta.token}` };
+  // Videos as long as the plan allowed when they were uploaded (long videos on paid plans), tracks up to 10 minutes.
+  const maxSeconds = asset.mime.startsWith("video/") ? Number(meta.maxSeconds) || SPEECH_MAX_SECONDS : SPEECH_MAX_SECONDS;
+  const payload: RenderPayload = { id: asset.id, operation: "inspect", url: `${siteUrl(e)}/api/upload-inputs/${asset.id}?token=${meta.token}`, maxSeconds };
   let speech = false;
   try {
-    const { slot, result } = await rendererJob(e, step, "inspect", payload, 90, "4 seconds");
+    // A long video (up to 2 GB) takes the renderer longer to download.
+    const { slot, result } = await rendererJob(e, step, "inspect", payload, maxSeconds > SPEECH_MAX_SECONDS ? 300 : 90, "4 seconds");
     if (!result.meta) throw new Error("MEDIA_TIMEOUT");
     const m = result.meta, expected = asset.mime.split("/")[0];
     if (m.kind !== expected) throw new Error("MEDIA_FORMAT");
     speech = await step.do("ready", async () => {
-      // Files that may hold speech are transcribed next (the renderer reads them again with a new capability token).
+      // Files that may hold speech are transcribed next, for free while the day's allowance lasts (Scribe reads them
+      // with a new capability token). Longer videos are transcribed on request.
       const checked = { hasAudio: m.hasAudio };
-      const listen = mayHaveSpeech({ ...asset, duration: result.duration || 0 }, m.hasAudio) ? await claimSpeech(e, asset.user_id, checked) : null;
+      const listen = mayHaveSpeech({ ...asset, duration: result.duration || 0 }, m.hasAudio) ? await claimSpeech(e, asset.user_id, checked, result.duration || 0) : null;
       await e.DB.prepare("UPDATE media_assets SET status='ready',duration=?,width=?,height=?,meta=?,updated_at=? WHERE id=? AND status='checking'")
         .bind(result.duration || 0, m.width || 0, m.height || 0, JSON.stringify(listen || checked), now(), asset.id).run();
       await releaseRender(e, slot, asset.id);
@@ -426,7 +468,8 @@ async function inspectUpload(e: Env, step: WorkflowStep, assetId: string) {
     const code = error instanceof Error ? error.message : "";
     await step.do("failed", () => failAsset(e, asset.id, ({
       MEDIA_TOO_LARGE: "This video is too large (over 4096 pixels or 9 megapixels per frame).",
-      MEDIA_TOO_LONG: "Videos and tracks can be up to 10 minutes long.",
+      MEDIA_TOO_LONG: maxSeconds > SPEECH_MAX_SECONDS ? "Videos can be up to 2 hours long." : asset.mime.startsWith("video/")
+        ? "Videos can be up to 10 minutes long on the free trial; paid plans take videos up to 2 hours." : "Tracks can be up to 10 minutes long.",
       MEDIA_FORMAT: "This file can't be read. Use MP4, MOV or WebM videos and MP3, WAV, M4A or OGG tracks.",
       MEDIA_TIMEOUT: "Checking this file took too long. Try uploading it again.",
     } as Record<string, string>)[code] || "This file couldn't be checked. Try uploading it again."));
@@ -442,32 +485,31 @@ async function patchMeta(e: Env, assetId: string, change: (meta: any) => void) {
   change(meta);
   await e.DB.prepare("UPDATE media_assets SET meta=?,updated_at=? WHERE id=?").bind(JSON.stringify(meta), now(), assetId).run();
 }
+/** Calls to Scribe: once (each is billed), and long enough for two hours of sound. */
+const scribeOnce = { retries: { limit: 0, delay: "1 second" as const }, timeout: "50 minutes" as const };
 /**
- * Transcribes a ready file whose speech is pending: the renderer cuts its sound into MP3 parts, Whisper hears each.
- * Any failure leaves the file usable, with no subtitles ("failed"; it can be tried again).
+ * Transcribes a ready file whose speech is pending: ElevenLabs Scribe reads it through its capability link. A free
+ * transcription that fails leaves the file usable, without subtitles ("failed"; it can be tried again); a paid one
+ * (`paid`: a run of kind "speech") also fails its run, which refunds the credits.
  */
-async function findSpeech(e: Env, step: WorkflowStep, assetId: string) {
+async function findSpeech(e: Env, step: WorkflowStep, assetId: string, paid = false) {
   const job = await step.do("speech-start", async () => {
-    const a = await e.DB.prepare("SELECT meta,status FROM media_assets WHERE id=?").bind(assetId).first<any>();
+    const a = await e.DB.prepare("SELECT meta,status,duration FROM media_assets WHERE id=?").bind(assetId).first<any>();
     const meta = json<any>(a?.meta, {});
     if (a?.status !== "ready" || meta.speech?.status !== "pending" || typeof meta.listen?.token !== "string") return null;
-    return { id: uid(), url: `${siteUrl(e)}/api/upload-inputs/${assetId}?token=${meta.listen.token}` };
+    return { url: `${siteUrl(e)}/api/upload-inputs/${assetId}?token=${meta.listen.token}`, duration: Number(a.duration) || 0, claim: uid() };
   });
-  if (!job) return;
-  let slot: number | null = null;
+  if (!job) {
+    if (paid) throw new Error("SPEECH_INVALID");
+    return;
+  }
   try {
-    const payload: RenderPayload = { id: job.id, operation: "audio", url: job.url, part: SPEECH_PART_SECONDS };
-    const done = await rendererJob(e, step, "speech-audio", payload, 75, "4 seconds");
-    slot = done.slot;
-    const files = Math.min(done.result.files || 0, Math.ceil(SPEECH_MAX_SECONDS / SPEECH_PART_SECONDS));
-    await step.do("speech-transcribe", { retries: { limit: 2, delay: "20 seconds" }, timeout: "10 minutes" }, async () => {
-      const parts: Uint8Array[] = [];
-      for (let n = 0; n < files; n++) {
-        const bytes = new Uint8Array(await (await renderFile(e, done.slot, job.id, n)).arrayBuffer());
-        if (bytes.length > 2 * MB) throw new Error("MEDIA_TOO_LARGE");
-        parts.push(bytes);
-      }
-      const transcript = files ? await transcribe(e, parts, SPEECH_PART_SECONDS) : { language: "", words: [] };
+    await step.do("speech-transcribe", scribeOnce, async () => {
+      // Paid once: the claim is stored before the call, so a step that runs again after it (its answer lost) stops.
+      const before = await e.DB.prepare("SELECT meta FROM media_assets WHERE id=?").bind(assetId).first<{ meta: string }>();
+      if (json<any>(before?.meta, {}).speech?.claim) throw new Error("SPEECH_UNCERTAIN");
+      await patchMeta(e, assetId, (meta) => { meta.speech = { ...meta.speech, claim: job.claim }; });
+      const transcript = await transcribe(e, job.url, job.duration);
       await patchMeta(e, assetId, (meta) => {
         const found = transcript.words.length > 0;
         meta.speech = { status: found ? "found" : "none", at: now(), ...(found && transcript.language && { language: transcript.language }) };
@@ -483,8 +525,7 @@ async function findSpeech(e: Env, step: WorkflowStep, assetId: string) {
       meta.speech = { status: "failed", at: now() };
       delete meta.listen;
     }));
-  } finally {
-    if (slot !== null) await step.do("speech-release", () => releaseRender(e, slot!, job.id));
+    if (paid) throw error;
   }
 }
 
