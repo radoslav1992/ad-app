@@ -2,85 +2,74 @@ import { z } from "zod";
 import type { Env } from "./types";
 import { DAY, now } from "./types";
 import { json } from "./db";
-import { hit, token } from "./security";
-import { SPEECH_MAX_SECONDS, TRANSCRIPT_MAX_WORDS, type SpeechStatus, type Transcript } from "../shared/speech";
+import { take, token } from "./security";
+import { failureCode, providerFetch, ProviderError } from "./providers/http";
+import { LONG_VIDEO_SECONDS, SPEECH_MAX_SECONDS, TRANSCRIPT_MAX_WORDS, type SpeechStatus, type Transcript } from "../shared/speech";
 import type { CaptionWord } from "../shared/captions";
 
-// Speech in uploaded videos and tracks, for subtitles. After an upload is checked (or on request, "Find speech"), the
-// renderer cuts its sound into small MP3 parts and Workers AI Whisper transcribes each part with word timings. The
-// words are kept in the file's meta (bounded); failures only mean "no subtitles", never a failed upload. It is free,
-// so it is bounded per person and per day.
+// Speech in uploaded videos and tracks, for subtitles, captions, instant cuts and clips. ElevenLabs Scribe v2 (the
+// pipeline rech-bg runs in production) reads the file itself through a short-lived capability link and returns word
+// timings in the language it detects. The words are kept in the file's meta (bounded); failures only mean "no
+// subtitles", never a failed upload. Files up to 10 minutes are transcribed for free, so that is bounded per person
+// and day (files and minutes); longer videos are transcribed on request for AI credits (a run of kind "speech").
 
-export const WHISPER_MODEL = "@cf/openai/whisper-large-v3-turbo";
-/** Seconds of sound per transcribed part (about 0.5 MB of MP3, well under a megabyte as base64). */
-export const SPEECH_PART_SECONDS = 120;
-/** Transcriptions per person and day (automatic ones after uploads and "Find speech" together). */
-export const SPEECH_PER_DAY = 30;
-/** How long the renderer may read a ready upload for its sound. */
-const LISTEN_SECONDS = 3600;
+export const SCRIBE_MODEL = "scribe_v2";
+export const SCRIBE_URL = "https://api.elevenlabs.io/v1/speech-to-text";
+/** Free transcriptions per person and day (automatic ones after uploads and "Find speech" together): files… */
+export const SPEECH_FILES_PER_DAY = 20;
+/** …and minutes of sound (Scribe costs about $0.40 an hour). */
+export const SPEECH_MINUTES_PER_DAY = 30;
+/** How long Scribe may read a file through its link; a run never lives longer (maintenance fails it). */
+const LISTEN_SECONDS = 3 * 3600;
 /** A transcription that has not finished by then is reported as failed (it can be tried again). */
-const PENDING_SECONDS = 1800;
+const PENDING_SECONDS = 3600;
 
-// The Whisper answer, as documented for @cf/openai/whisper-large-v3-turbo (Workers AI model page and
-// @cloudflare/workers-types): transcription_info.language, text, and segments with no_speech_prob, avg_logprob and
-// words [{ word, start, end }] in seconds.
-const whisperOutput = z.object({
-  transcription_info: z.object({ language: z.string().optional() }).partial().optional(),
-  text: z.string().optional(),
-  segments: z.array(z.object({
-    no_speech_prob: z.number().optional(),
-    avg_logprob: z.number().optional(),
-    words: z.array(z.object({ word: z.string().optional(), start: z.number().optional(), end: z.number().optional() })).optional(),
-  })).optional(),
+// The Scribe answer (ElevenLabs speech-to-text, as in @elevenlabs/elevenlabs-js SpeechToTextChunkResponseModel):
+// language_code (ISO 639-3, e.g. "eng"), text, and words [{ text, start, end, type: word|spacing|audio_event }].
+const scribeOutput = z.object({
+  language_code: z.string().optional(),
+  words: z.array(z.object({ text: z.unknown(), start: z.unknown(), end: z.unknown(), type: z.unknown() }).partial()).optional(),
 });
-
 const round = (n: number) => Math.round(n * 100) / 100;
 /**
- * The words of one Whisper answer, moved by `offset` seconds (where its part starts in the file). Segments Whisper
- * itself thinks are not speech are dropped (its rule: likely silence and low confidence), as are sound notes like
- * "[Music]" or "♪".
+ * The words of a Scribe answer, as rech-bg keeps them: only real words with times, never before the previous word's
+ * end (times only go forward), cut to the file's length, without brackets or control characters.
  */
-export function whisperWords(result: unknown, offset = 0): { language: string; words: CaptionWord[] } {
-  const r = whisperOutput.safeParse(result);
+export function scribeWords(result: unknown, duration: number): Transcript {
+  const r = scribeOutput.safeParse(result);
   if (!r.success) return { language: "", words: [] };
-  const words: CaptionWord[] = [];
-  for (const segment of r.data.segments || []) {
-    if ((segment.no_speech_prob ?? 0) > 0.6 && (segment.avg_logprob ?? 0) < -1) continue;
-    for (const w of segment.words || []) {
-      // eslint-disable-next-line no-control-regex -- control characters never belong in a caption
-      const text = (w.word || "").replace(/[\u0000-\u001f\u007f]/g, "").replace(/\s+/g, " ").trim().slice(0, 40);
-      if (!text || /^[[(♪*].*[\])♪*]$|^♪+$/u.test(text)) continue;
-      if (!Number.isFinite(w.start) || !Number.isFinite(w.end)) continue;
-      const start = round(offset + Math.max(0, w.start!));
-      words.push({ text, start, end: Math.max(round(offset + w.end!), round(start + 0.05)) });
-    }
+  const limit = duration > 0 ? duration : Infinity, words: CaptionWord[] = [];
+  let end = 0;
+  for (const w of r.data.words || []) {
+    if (w.type !== "word" || typeof w.text !== "string" || typeof w.start !== "number" || typeof w.end !== "number" || !Number.isFinite(w.start) || !Number.isFinite(w.end)) continue;
+    const start = round(Math.max(end, 0, w.start)), finish = round(Math.min(limit, w.end));
+    end = finish;
+    // eslint-disable-next-line no-control-regex -- control characters never belong in a caption
+    const text = w.text.replace(/[[\]<>\u0000-\u001f\u007f]/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
+    if (text && finish > start) words.push({ text, start, end: finish });
   }
-  const language = (r.data.transcription_info?.language || "").toLowerCase().replace(/[^a-z-]/g, "").slice(0, 12);
-  return { language, words };
+  const language = (r.data.language_code || "").toLowerCase().replace(/[^a-z-]/g, "").slice(0, 12);
+  return { language, words: words.slice(0, TRANSCRIPT_MAX_WORDS) };
 }
 
-/** Bytes as base64 (Whisper's `audio` input), in slices so large buffers do not overflow the call stack. */
-export function base64(bytes: Uint8Array) {
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(binary);
-}
-/** Transcribes the parts of a file's sound (part n starts at n × `partSeconds`) into one transcript, in time order. */
-export async function transcribe(env: Env, parts: Uint8Array[], partSeconds: number): Promise<Transcript> {
-  const words: CaptionWord[] = [];
-  let language = "";
-  for (let n = 0; n < parts.length; n++) {
-    const result = await env.AI.run(WHISPER_MODEL, {
-      audio: base64(parts[n]), task: "transcribe", vad_filter: true,
-      // Not conditioning on the previous text keeps a mistake from repeating through the rest of a part.
-      condition_on_previous_text: false,
-    });
-    const part = whisperWords(result, n * partSeconds);
-    words.push(...part.words.filter((w) => w.start < (n + 1) * partSeconds + 1));
-    language ||= part.language;
-  }
-  words.sort((a, b) => a.start - b.start);
-  return { language, words: words.slice(0, TRANSCRIPT_MAX_WORDS) };
+/**
+ * Transcribes the file behind `url` (a capability link Scribe downloads from) once: no automatic retries, each call is
+ * billed. No language is given, so Scribe detects it.
+ */
+export async function transcribe(e: Env, url: string, duration: number): Promise<Transcript> {
+  const key = e.ELEVENLABS_API_KEY?.trim();
+  if (!key) throw new ProviderError("SPEECH_UNAVAILABLE");
+  const body = new FormData();
+  body.set("model_id", SCRIBE_MODEL);
+  body.set("source_url", url);
+  body.set("timestamps_granularity", "word");
+  body.set("tag_audio_events", "false");
+  // About ten minutes, and more for long videos (Scribe answers when the whole file is done).
+  const r = await providerFetch(SCRIBE_URL, {
+    method: "POST", headers: { "xi-api-key": key }, body, signal: AbortSignal.timeout((10 + Math.min(duration, LONG_VIDEO_SECONDS) / 240) * 60000),
+  });
+  if (!r.ok) throw new ProviderError(await failureCode(r, "SPEECH"));
+  return scribeWords(await r.json(), duration);
 }
 
 /** What the API tells about a file's speech: its status (null: never checked) and language. */
@@ -91,20 +80,37 @@ export function speechView(a: { kind?: string; mime: string; meta: string | null
   const status: SpeechStatus = s.status === "pending" && (s.at || 0) < now() - PENDING_SECONDS ? "failed" : s.status;
   return { speech: status, speechLanguage: status === "found" ? s.language || null : null };
 }
-/** The stored transcript of a file, if speech was found. */
-export function storedTranscript(meta: string | null): Transcript | null {
+/** The stored transcript of a file, if speech was found; only the words in [from, to] when a range is given. */
+export function storedTranscript(meta: string | null, from = 0, to = Infinity): Transcript | null {
   const t = json<any>(meta, {}).transcript;
-  return t && Array.isArray(t.words) && t.words.length ? { language: String(t.language || ""), words: t.words } : null;
+  if (!t || !Array.isArray(t.words) || !t.words.length) return null;
+  const words = from > 0 || to < Infinity ? t.words.filter((w: CaptionWord) => w.end >= from && w.start <= to) : t.words;
+  return { language: String(t.language || ""), words };
 }
-/** Whether a file can hold speech worth transcribing: an own video or track with sound, up to 10 minutes. */
+const ownSound = (a: { kind: string; mime: string; duration: number }, hasAudio: boolean | null | undefined) =>
+  a.kind === "upload" && /^(video|audio)\//.test(a.mime) && hasAudio !== false && a.duration >= 1;
+/** Whether a file's speech is transcribed for free: an own video or track with sound, up to 10 minutes. */
 export function mayHaveSpeech(a: { kind: string; mime: string; duration: number }, hasAudio: boolean | null | undefined) {
-  return a.kind === "upload" && /^(video|audio)\//.test(a.mime) && hasAudio !== false && a.duration >= 1 && a.duration <= SPEECH_MAX_SECONDS;
+  return ownSound(a, hasAudio) && a.duration <= SPEECH_MAX_SECONDS;
+}
+/** Whether a longer file can be transcribed on request (paid): an own video or track with sound, up to 2 hours. */
+export function mayTranscribe(a: { kind: string; mime: string; duration: number }, hasAudio: boolean | null | undefined) {
+  return ownSound(a, hasAudio) && a.duration > SPEECH_MAX_SECONDS && a.duration <= LONG_VIDEO_SECONDS;
+}
+/** Meta for a file whose speech is about to be transcribed: pending, with a capability token Scribe reads it with. */
+export function listening(meta: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+  return { ...meta, speech: { status: "pending", at: now(), ...extra }, listen: { token: token(), until: now() + LISTEN_SECONDS } };
 }
 /**
- * Meta for a file whose speech is about to be transcribed: pending, with a capability token the renderer reads it
- * with. Null when the person's daily allowance is used up.
+ * Meta for a free transcription of a file `seconds` long, or null when the person's daily allowance (files or
+ * minutes) is used up.
  */
-export async function claimSpeech(env: Env, userId: string, meta: Record<string, unknown>) {
-  if ((await hit(env, "speech-day", DAY, userId)) > SPEECH_PER_DAY) return null;
-  return { ...meta, speech: { status: "pending", at: now() }, listen: { token: token(), until: now() + LISTEN_SECONDS } };
+export async function claimSpeech(env: Env, userId: string, meta: Record<string, unknown>, seconds: number) {
+  const minutes = Math.max(1, Math.ceil(seconds / 60));
+  if (!(await take(env, "speech-minutes", DAY, userId, minutes, SPEECH_MINUTES_PER_DAY))) return null;
+  if (!(await take(env, "speech-files", DAY, userId, 1, SPEECH_FILES_PER_DAY))) {
+    await take(env, "speech-minutes", DAY, userId, -minutes, SPEECH_MINUTES_PER_DAY);
+    return null;
+  }
+  return listening(meta);
 }

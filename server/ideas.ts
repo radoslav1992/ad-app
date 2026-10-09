@@ -37,7 +37,8 @@ export async function loadCatalog(env: Env, userId: string, workspaceId: string,
     rows.map((r, i) => ({ ref: `${prefix}${i + 1}`, id: r.id, name: String(r.name || "").slice(0, 80), ...map(r) }));
   return {
     images: items(assets.filter((a) => a.mime.startsWith("image/")).slice(0, 40), "img"),
-    videos: items(assets.filter((a) => a.mime.startsWith("video/") && a.kind === "upload").slice(0, 20), "vid", (r) => ({ seconds: r.duration, speech: r.speech === "found" })),
+    // Long videos (podcasts, webinars) are for clips (server/shorts.ts), not demos.
+    videos: items(assets.filter((a) => a.mime.startsWith("video/") && a.kind === "upload" && a.duration <= 600).slice(0, 20), "vid", (r) => ({ seconds: r.duration, speech: r.speech === "found" })),
     clips: items(library.filter((l) => l.kind === "clip").slice(0, 60), "clip", (r) => ({ tags: r.tags, seconds: r.duration })),
     greens: items(library.filter((l) => l.kind === "greenscreen").slice(0, 30), "gs", (r) => ({ tags: r.tags, seconds: r.duration })),
     music: items(library.filter((l) => l.kind === "music").slice(0, 40), "music", (r) => ({ tags: r.tags, seconds: r.duration })),

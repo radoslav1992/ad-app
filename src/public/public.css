@@ -153,7 +153,7 @@
 @media (max-width: 900px) { .pub-steps { grid-template-columns: 1fr; } }
 
 /* Formats */
-.formats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; list-style: none; margin: 0; padding: 0; }
+.formats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; list-style: none; margin: 0; padding: 0; }
 .format-card { display: flex; flex-direction: column; gap: 12px; padding: 14px 14px 20px; }
 .format-card h3 { font-family: var(--display); font-size: 19px; letter-spacing: -0.01em; color: #fff; }
 .format-card .short { color: #d9f59a; font-weight: 600; font-size: 13px; }
@@ -190,6 +190,13 @@
 .fmt-ugc .person { position: absolute; bottom: 0; left: 50%; transform: translateX(-50%); width: 70%; aspect-ratio: 1 / 1.05; }
 .fmt-ugc .cap { position: absolute; bottom: 18%; left: 8px; right: 8px; font-size: 16px; font-weight: 800; text-shadow: 0 2px 0 #000, 0 -1px 0 #000, 2px 0 0 #000, -2px 0 0 #000; }
 .fmt-ugc .cap em { font-style: normal; color: #c8f560; }
+/* A wide recording with the vertical crop that follows the speaker. */
+.fmt-clip { background: linear-gradient(160deg, #1b2433, #0b0e15); }
+.fmt-clip .wide { position: absolute; inset: 22% -30% 22% -30%; border-radius: 8px; background: linear-gradient(90deg, #2a3446, #3b2d4f 55%, #253244); }
+.fmt-clip .person { position: absolute; bottom: 0; left: 50%; transform: translateX(-50%); width: 30%; aspect-ratio: 1 / 1.05; }
+.fmt-clip .crop { position: absolute; inset: 6% 24%; border: 2px solid #b8f53a; border-radius: 12px; box-shadow: 0 0 0 999px rgba(5, 7, 12, 0.55); }
+.fmt-clip .cap { position: absolute; bottom: 14%; left: 26%; right: 26%; font-size: 13px; font-weight: 800; line-height: 1.15; text-shadow: 0 2px 0 #000, 0 -1px 0 #000, 2px 0 0 #000, -2px 0 0 #000; }
+.fmt-clip .cap em { font-style: normal; color: #c8f560; }
 @media (max-width: 440px) {
   .fmt-art { aspect-ratio: auto; height: 220px; }
   .fmt-ugc .person { width: 170px; }

@@ -5,7 +5,7 @@ import {
   Sparkles, UserRound, Wand2, X,
 } from "lucide-react";
 import { PRODUCT } from "../../shared/brand";
-import type { FormatId, formats as Formats } from "../../shared/formats";
+import type { PostFormatId, formats as Formats } from "../../shared/formats";
 import { plans, TRIAL_DAYS } from "../../shared/plans";
 import { platforms } from "../../shared/social";
 import { useAuth } from "../lib";
@@ -109,7 +109,7 @@ function PhoneMockup() {
 }
 
 /** Small CSS pictures of each format (decorative). */
-function FormatArt({ id }: { id: FormatId }) {
+function FormatArt({ id }: { id: PostFormatId }) {
   return (
     <div className={`fmt-art fmt-${id}`} aria-hidden="true">
       {id === "slideshow" && (
@@ -138,6 +138,13 @@ function FormatArt({ id }: { id: FormatId }) {
           <span className="cap">this <em>changed</em> how I</span>
         </>
       )}
+      {id === "clip" && (
+        <>
+          <div className="wide"><div className="person" /></div>
+          <div className="crop" />
+          <span className="cap">the part <em>nobody</em> tells you</span>
+        </>
+      )}
     </div>
   );
 }
@@ -147,7 +154,7 @@ function FormatCards() {
   if (!list)
     return (
       <ul className="formats" aria-busy="true">
-        {[0, 1, 2, 3, 4].map((i) => (
+        {[0, 1, 2, 3, 4, 5].map((i) => (
           <li key={i} className="glass format-card skeleton" aria-hidden="true">
             <div className="fmt-art" />
             <div><span className="bar short-bar" /><span className="bar" /></div>
@@ -158,7 +165,7 @@ function FormatCards() {
     );
   return (
     <ul className="formats">
-      {(Object.keys(list) as FormatId[]).map((id) => (
+      {(Object.keys(list) as PostFormatId[]).map((id) => (
         <li key={id} className="glass format-card">
           <FormatArt id={id} />
           <div>
@@ -310,7 +317,7 @@ export function Landing() {
       <section className="pub-section" id="features" aria-labelledby="formats-title" tabIndex={-1}>
         <div className="pub-wrap">
           <div className="pub-section-head center">
-            <span className="kicker">Five formats</span>
+            <span className="kicker">Six formats</span>
             <h2 className="title" id="formats-title">The formats that work on short-form, made for you</h2>
             <p className="sub">Mix them freely. Each post comes with its caption, hashtags and title for every network.</p>
           </div>

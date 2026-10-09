@@ -3,14 +3,20 @@ import { captionStyles, type CaptionStyle } from "./captions";
 import { textLookSchema, defaultLook } from "./overlay";
 import { CLIP_CREDITS, IMAGE_CREDITS, avatarCredits, speechSeconds, talkingCredits, voiceCredits, type AvatarKind } from "./credits";
 import { brollAssets, brollLibrary, brollPending, brollSchema } from "./broll";
+import { trackSchema } from "./track";
+import { LONG_VIDEO_SECONDS } from "./speech";
 
 // The post formats and the editable description ("spec") of a post. A spec references media by ID (the owner's
 // uploads and website images, the shared library, characters) or asks for AI media with a prompt. The server owns
 // everything under `generated` (voices, avatar videos, word timings): an edit from the browser never sets it.
 
+/** The formats the writer makes (Blitz batches, automations, manual drafts). */
 export const formatIds = ["slideshow", "text", "hook_demo", "green_screen", "ugc"] as const;
 export type FormatId = (typeof formatIds)[number];
-export const formats: Record<FormatId, { name: string; short: string; description: string; ai: boolean }> = {
+/** Every post format: the written ones, and clips cut from a long video (the Clips page, server/shorts.ts). */
+export const postFormatIds = [...formatIds, "clip"] as const;
+export type PostFormatId = (typeof postFormatIds)[number];
+export const formats: Record<PostFormatId, { name: string; short: string; description: string; ai: boolean }> = {
   slideshow: {
     name: "Slideshow",
     short: "Photo carousel",
@@ -40,6 +46,12 @@ export const formats: Record<FormatId, { name: string; short: string; descriptio
     short: "Talking creator",
     description: "An AI creator talks about your product straight to camera, with word-by-word captions.",
     ai: true,
+  },
+  clip: {
+    name: "Clip",
+    short: "From a long video",
+    description: "The strongest moment of your podcast, webinar or demo call: framed on the speaker, with animated captions.",
+    ai: false,
   },
 };
 
@@ -102,6 +114,14 @@ export const subtitlesSchema = z
   .object({ enabled: z.boolean().default(false), style: z.enum(captionStyles).default("classic" satisfies CaptionStyle) })
   .default({ enabled: false, style: "classic" });
 export type Subtitles = z.infer<typeof subtitlesSchema>;
+/**
+ * Instant cuts of a talking clip (shared/cuts.ts): long pauses, and filler sounds with `fillers`, are cut out where the
+ * transcript shows them. Off unless switched on; posts made before cuts existed have none.
+ */
+export const cutsSchema = z
+  .object({ enabled: z.boolean().default(false), fillers: z.boolean().default(true) })
+  .default({ enabled: false, fillers: true });
+export type Cuts = z.infer<typeof cutsSchema>;
 
 export const slideSchema = z.object({ text: screen(300), image: imageRefSchema });
 export const slideshowSpec = z.object({
@@ -151,11 +171,13 @@ export const hookDemoSpec = z.object({
   /** On-screen hook over the reaction. */
   hook: screen(200).min(1),
   hookClip: hookClipSchema,
-  /** The demo: an uploaded video, from `start` for `seconds`. */
-  demo: z.object({ assetId: uuid, start: z.number().min(0).max(600).default(0), seconds: z.number().min(2).max(45).default(12) }),
+  /** The demo: an uploaded video, from `start` for `seconds` (before cuts). */
+  demo: z.object({ assetId: uuid, start: z.number().min(0).max(LONG_VIDEO_SECONDS).default(0), seconds: z.number().min(2).max(45).default(12) }),
   demoText: screen(200).default(""),
   /** Subtitles of what is said in the demo (the part of it that is used). */
   subtitles: subtitlesSchema,
+  /** Pauses (and fillers) cut out of a talking demo. */
+  cuts: cutsSchema,
   look,
   music: musicSchema,
   generated: generatedVoice.optional(),
@@ -174,13 +196,38 @@ export const greenScreenSpec = z.object({
   music: musicSchema,
   ...common,
 });
-export const specSchema = z.discriminatedUnion("format", [slideshowSpec, textSpec, hookDemoSpec, greenScreenSpec, ugcSpec]);
+/** A clip's moment lasts 5–90 seconds of its video (the Clips page suggests 15–60). */
+export const CLIP_MIN_SECONDS = 5, CLIP_MAX_SECONDS = 90;
+/** Seconds the hook title of a clip stays on screen. */
+export const CLIP_TITLE_SECONDS = 3;
+export const clipSpec = z.object({
+  format: z.literal("clip"),
+  /** The moment: seconds `start` to `end` of an uploaded (long) video. */
+  source: z.object({ assetId: uuid, start: z.number().min(0).max(LONG_VIDEO_SECONDS), end: z.number().min(0).max(LONG_VIDEO_SECONDS) })
+    .refine((s) => s.end - s.start >= CLIP_MIN_SECONDS - 0.01 && s.end - s.start <= CLIP_MAX_SECONDS + 0.01, `A clip lasts ${CLIP_MIN_SECONDS} to ${CLIP_MAX_SECONDS} seconds.`),
+  cuts: cutsSchema,
+  /** Keep the speaker in the middle of a wider video (face tracking); off, or no face found: the centre. */
+  follow: z.boolean().default(true),
+  /** Captions of what is said (the video's transcript), in one of the twenty styles. */
+  captions: z.object({ enabled: z.boolean().default(true), style: z.enum(captionStyles).default("bold" satisfies CaptionStyle) }).default({ enabled: true, style: "bold" }),
+  /** On-screen title for the first seconds (optional). */
+  hook: screen(140).default(""),
+  hookLook: textLookSchema.default({ ...defaultLook(), position: "top" }),
+  music: musicSchema,
+  /** Server-owned: where the speaker is in this moment (measured when it is made), for `key` = trackKey. */
+  tracked: z.object({ key: z.string().max(200), track: trackSchema }).optional(),
+  ...common,
+});
+export const specSchema = z.discriminatedUnion("format", [slideshowSpec, textSpec, hookDemoSpec, greenScreenSpec, ugcSpec, clipSpec]);
 export type Spec = z.infer<typeof specSchema>;
 export type SlideshowSpec = z.infer<typeof slideshowSpec>;
 export type TextSpec = z.infer<typeof textSpec>;
 export type UgcSpec = z.infer<typeof ugcSpec>;
 export type HookDemoSpec = z.infer<typeof hookDemoSpec>;
 export type GreenScreenSpec = z.infer<typeof greenScreenSpec>;
+export type ClipSpec = z.infer<typeof clipSpec>;
+/** The moment a clip's speaker path was measured for: a new moment needs a new measurement. */
+export const trackKey = (spec: ClipSpec) => `${spec.source.assetId}:${spec.source.start}:${spec.source.end}`;
 
 /** The hook clip of a hook + demo is at most this long; the demo follows it. */
 export const HOOK_CLIP_MAX_SECONDS = 6;
@@ -232,6 +279,7 @@ export function estimatedSeconds(spec: Spec) {
     case "text": case "green_screen": return spec.seconds;
     case "ugc": return speechSeconds(spec.script) + 0.5;
     case "hook_demo": return Math.min(HOOK_CLIP_MAX_SECONDS, "line" in spec.hookClip ? speechSeconds(spec.hookClip.line) : 3) + spec.demo.seconds;
+    case "clip": return spec.source.end - spec.source.start;
   }
 }
 /** All of the owner's media asset IDs a spec references, for ownership checks. */
@@ -241,6 +289,7 @@ export function referencedAssets(spec: Spec): string[] {
   if (spec.format === "text" || spec.format === "green_screen") ids.push(spec.background.assetId);
   if (spec.format === "hook_demo") ids.push(spec.demo.assetId);
   if (spec.format === "ugc") ids.push(...brollAssets(spec.broll));
+  if (spec.format === "clip") ids.push(spec.source.assetId);
   if (spec.music?.assetId) ids.push(spec.music.assetId);
   return [...new Set(ids.filter((x): x is string => !!x))];
 }
@@ -257,6 +306,7 @@ export function referencedLibrary(spec: Spec): string[] {
 export function specHook(spec: Spec) {
   if (spec.format === "slideshow") return spec.slides[0]?.text || "";
   if (spec.format === "ugc") return spec.hook || spec.script.split(/(?<=[.!?])\s/)[0] || "";
+  if (spec.format === "clip") return spec.hook || spec.topic || "Clip";
   if (spec.format === "text" || spec.format === "green_screen") return spec.text.split("\n")[0];
   return spec.hook;
 }

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   House, Rocket, Lightbulb, Zap, Wand2, UserRound, Clapperboard, Images, CalendarDays, BarChart3, CircleDollarSign, Building2, Share2,
-  Settings, Shield, PanelLeftClose, PanelLeftOpen, Clock, Menu, ChevronDown, Plus, PenSquare, LogOut,
+  Settings, Shield, PanelLeftClose, PanelLeftOpen, Clock, Menu, ChevronDown, Plus, PenSquare, LogOut, Scissors,
 } from "lucide-react";
 import { post, timeLeft, useAuth, fileUrl, number } from "../lib";
 import { useWorkspace } from "./workspace";
@@ -78,6 +78,7 @@ export function AppLayout() {
         {item("/app", House, "Home", { end: true })}
         {item("/app/blitz", Rocket, "Blitz")}
         {item("/app/create", PenSquare, "Create")}
+        {item("/app/clips", Scissors, "Clips")}
         {item("/app/inspiration", Lightbulb, "Inspiration")}
         {item("/app/automations", Zap, "Automations", { className: "highlight" })}
         {item("/app/studio", Wand2, "AI Studio")}

@@ -8,7 +8,7 @@ import "./post.css";
 
 export const phaseLabels: Record<string, string> = {
   images: "Making AI images…", clip: "Making an AI clip…", voice: "Recording the voice…", creator: "Animating your creator…",
-  rendering: "Putting it together…", saving: "Almost done…",
+  tracking: "Finding the speaker…", rendering: "Putting it together…", saving: "Almost done…",
 };
 export function PostPlayer({ post, muted = true, onMute, active = true, showSlides = true }: { post: Post; muted?: boolean; onMute?: (m: boolean) => void; active?: boolean; showSlides?: boolean }) {
   const video = useRef<HTMLVideoElement>(null);

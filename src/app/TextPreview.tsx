@@ -4,6 +4,8 @@ import type { CaptionDocument } from "../../shared/captions";
 import { overlayItems, type TextLook } from "../../shared/overlay";
 import { motionAt, type Motion } from "../../shared/layers";
 import { FRAME } from "../../shared/render";
+import { toCutTime, type KeepRange } from "../../shared/cuts";
+import { followLeft, trackX, type TrackPoint } from "../../shared/track";
 import { drawCaptions, drawItems, fitCanvas, loadCaptionFonts, onFrame, reducedMotion } from "./caption-canvas";
 import "./post.css";
 
@@ -12,7 +14,11 @@ import "./post.css";
 
 /** A text block on the preview's clock (its entrance starts at `start`). */
 export type TextBlock = { text: string; look: TextLook; start: number; end: number };
-export type PreviewBackground = { url: string; kind: "image" | "video"; start?: number } | { color: string } | null;
+/**
+ * A video background can play only `keep` (instant cuts: ranges on the video's own clock, joined as the render joins
+ * them) and follow the speaker along `track` (shared/track.ts, the video's clock), as the render crops it.
+ */
+export type PreviewBackground = { url: string; kind: "image" | "video"; start?: number; keep?: KeepRange[] | null; track?: TrackPoint[] | null } | { color: string } | null;
 /** A B-roll cut-away on the preview's clock: its picture over the background (a stand-in until it is made). */
 export type PreviewCutaway = { start: number; end: number; url?: string; kind?: "image" | "video"; motion?: Motion; label: string };
 
@@ -46,6 +52,8 @@ export function TextPreview({ blocks, background, seconds, captions, videoClock 
     [key, still]);
   const videoUrl = background && "url" in background && background.kind === "video" ? background.url : null;
   const start = background && "url" in background ? background.start || 0 : 0;
+  const keep = background && "url" in background && background.keep?.length ? background.keep : null;
+  const track = background && "url" in background && background.track?.length ? background.track : null;
   useEffect(() => { loadCaptionFonts(); }, []);
   useEffect(() => {
     let last = 0;
@@ -55,7 +63,12 @@ export function TextPreview({ blocks, background, seconds, captions, videoClock 
       const v = video.current;
       let t: number;
       // The video is the clock once it can play (until then, or if it cannot, a timer stands in).
-      if (videoClock && v && v.readyState >= 2) {
+      if (videoClock && v && v.readyState >= 2 && keep) {
+        // Cut parts are skipped: the video jumps to the next kept part, and after the last one starts again.
+        const at = v.currentTime;
+        if (!keep.some(([a, b]) => at >= a - 0.02 && at < b)) v.currentTime = (keep.find(([a]) => a > at) || keep[0])[0];
+        t = toCutTime(Math.max(keep[0][0], v.currentTime), keep) ?? 0;
+      } else if (videoClock && v && v.readyState >= 2) {
         // The demo's used part (or the whole recording) loops.
         if (v.readyState >= 1 && (v.currentTime >= start + seconds || v.currentTime < start - 0.5)) v.currentTime = start;
         t = Math.max(0, v.currentTime - start);
@@ -65,6 +78,13 @@ export function TextPreview({ blocks, background, seconds, captions, videoClock 
         if (v && t < last && v.readyState >= 1) v.currentTime = start;
       }
       last = t;
+      // Following the speaker: the picture slides so their face stays in the middle, as the render crops it.
+      if (v && track && v.videoWidth && v.clientHeight) {
+        const drawn = (v.clientHeight * v.videoWidth) / v.videoHeight, frame = v.clientWidth;
+        const share = drawn > frame ? (followLeft(drawn, frame, trackX(track, v.currentTime)) / (frame - drawn)) * 100 : 50;
+        const position = `${share.toFixed(1)}% 50%`;
+        if (v.style.objectPosition !== position) v.style.objectPosition = position;
+      } else if (v?.style.objectPosition) v.style.objectPosition = "";
       // Cut-aways: shown during their span (a clip from its start), a still moving as the renderer moves it.
       cutaways?.forEach((cut, i) => {
         const el = cuts.current[i], on = !still && t >= cut.start && t < cut.end;
@@ -88,7 +108,7 @@ export function TextPreview({ blocks, background, seconds, captions, videoClock 
       for (const b of items) if (still || (t >= b.start && t < b.end)) drawItems(ctx, b.items, t);
       if (captions) drawCaptions(ctx, FRAME.width, FRAME.height, t, captions);
     });
-  }, [items, captions, seconds, videoClock, start, still, videoUrl, cutaways]);
+  }, [items, captions, seconds, videoClock, start, still, videoUrl, cutaways, keep, track]);
   // A new start (the demo slider) moves the video there at once.
   useEffect(() => {
     const v = video.current;

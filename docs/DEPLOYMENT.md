@@ -17,7 +17,7 @@ npx wrangler r2 bucket create ad-app-media
 Then apply the schema (once, and again whenever a new file lands in `migrations/`):
 
 ```sh
-npm run db:remote                        # applies every migration not applied yet (0001_initial.sql … 0004_operations.sql)
+npm run db:remote                        # applies every migration not applied yet (0001_initial.sql … 0005_clips.sql)
 ```
 
 **0002 (analytics):** run `npm run db:remote` *before* deploying the version that uses it. It only adds columns to
@@ -34,11 +34,19 @@ the new version's checkout, admin Billing and Operations tabs and the hourly sum
 `npx wrangler d1 migrations list ad-app --remote` (nothing left to apply) and
 `npx wrangler d1 execute ad-app --remote --command "PRAGMA table_info(terms_acceptances)"` (shows `account_deleted_at`).
 
+**0005 (clips):** rebuilds `posts` and `runs` (new formats `clip` and `story`, the latter for the narrated format that
+follows; run kind `speech`), keeping every row, index and trigger. Apply it *before* deploying the version that uses
+it, at a quiet moment: while it runs, writes to posts and runs wait. The previous version keeps working on the
+rebuilt tables.
+
 - **R2:** add a lifecycle rule to *abort incomplete multipart uploads after 1 day*. Do **not** add an object-expiry
   rule; the app deletes files itself.
 - **Workers Paid** is required for Containers and longer CPU time. Containers must be enabled on the account; the
-  image is `renderer/Dockerfile`. The first rollout takes a few minutes.
-- **Workers AI** is used through the `AI` binding for brand profiles and post ideas (`TEXT_MODEL`, default
+  image is `renderer/Dockerfile`. The first rollout takes a few minutes. The image installs OpenCV
+  (`opencv-python-headless`, pinned) and downloads the YuNet face model at a fixed commit, checked against its SHA-256
+  (build-time network access to `media.githubusercontent.com`). Each renderer (`standard-2`) needs disk for a 2 GB
+  input.
+- **Workers AI** is used through the `AI` binding for brand profiles, post ideas and the moments of clips (`TEXT_MODEL`, default
   `openai/gpt-5.6-luna`, the same model rech-bg uses).
 - **Email sending:** set up `hookstreak.com` for sending in Cloudflare Email, the same way as `rechbg.com` for
   rech-bg. The sender `hello@hookstreak.com` is already allowed in `wrangler.jsonc`. The same binding sends the
@@ -70,7 +78,7 @@ Set these in Workers → Settings → Variables and Secrets. `keep_vars` keeps t
 | `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_GROWTH`, `STRIPE_PRICE_PRO` | text | Monthly USD prices ($29 / $49 / $149) |
 | `STRIPE_AUTOMATIC_TAX` | text | `true` when Stripe Tax is set up |
 | `FAL_KEY` | secret | AI images (`fal-ai/nano-banana-2`) and clips (`fal-ai/kling-video/v2.5-turbo/pro/text-to-video`) |
-| `ELEVENLABS_API_KEY` | secret | Voices (`eleven_v3`, text to speech with timestamps) |
+| `ELEVENLABS_API_KEY` | secret | Voices (`eleven_v3`, text to speech with timestamps) and speech to text (`scribe_v2`: subtitles, cuts, clips; it fetches uploads from `SITE_URL`) |
 | `ELEVENLABS_VOICES` | text | Optional JSON overriding the voice mapping in `server/voices.ts` |
 | `HEYGEN_API_KEY` | secret | Talking creators (v3 videos; Avatar III for linked looks, photo animation otherwise) |
 | `TEXT_MODEL` | text | Optional Workers AI model override |
@@ -162,3 +170,6 @@ You need the rights to everything you upload, including permission for every per
 - **HeyGen stock list:** the browse view follows rech-bg's use of `GET /v3/avatars/looks?ownership=public`; it is
   tested against mocked responses (three list shapes), not against HeyGen's live catalogue.
 - **Talking creator prices:** these are estimated from the script length (about 15 characters per second).
+- **Speech to text:** Scribe reads files by URL (`source_url`, files under 2 GB); free transcription is capped at 20
+  files and 30 minutes per person and day. Face tracking was tested on generated videos and a still face, not on real
+  podcast footage.

@@ -629,80 +629,185 @@ class HttpTest(RendererTest):
         self.assertFalse(os.path.exists(directory))
         self.assertEqual(self.call('GET', f'/jobs/{id}')[0], 404)
 
-class AudioTest(RendererTest):
-    """'audio': an upload's sound as mono 16 kHz MP3 parts for speech recognition (part n starts at n * part seconds)."""
+class CutsTest(RendererTest):
+    """Instant cuts (shared/cuts.ts) and "follow the speaker" (shared/track.ts) in a video segment of 'compose'."""
     @classmethod
     def setUpClass(cls):
-        # 25 s of a tone that sounds only from 10.0 to 10.5 s (the second part's first half second), with a picture.
-        make('talk.mp4', '-f','lavfi','-i','color=c=gray:s=320x180:r=30:d=25','-f','lavfi','-i','sine=frequency=440:duration=25',
-             '-af',"volume=0:enable='not(between(t,10,10.5))'",'-c:v','libx264','-threads','1','-pix_fmt','yuv420p','-c:a','aac','-shortest')
-        make('quiet.mp4', '-f','lavfi','-i','color=c=gray:s=320x180:r=30:d=3','-f','lavfi','-i','anullsrc=r=44100:cl=stereo',
-             '-t','3','-c:v','libx264','-threads','1','-pix_fmt','yuv420p','-c:a','aac')
+        # 13 s of a moving pattern with a steady tone (44.1 kHz, as phones record), and a 480x270 filmed clip of
+        # red | green | blue bands with sound.
+        make('film.mp4', '-f','lavfi','-i','testsrc=s=160x90:r=25:d=13','-f','lavfi','-i','sine=frequency=300:sample_rate=44100:duration=13',
+             '-c:v','libx264','-threads','1','-pix_fmt','yuv420p','-c:a','aac')
+        bands = [a for c in ('red', 'lime', 'blue') for a in ('-f', 'lavfi', '-i', f'color=c={c}:s=160x270:r=30:d=4')]
+        make('bands.mp4', *bands, '-f','lavfi','-i','sine=frequency=300:duration=4','-filter_complex','[0][1][2]hstack=3[v]',
+             '-map','[v]','-map','3:a','-c:v','libx264','-threads','1','-pix_fmt','yuv420p','-c:a','aac')
 
-    def audio(self, name, **changes):
-        return run({'operation': 'audio', 'url': FIXTURES.upload_url(name), 'part': 10, **changes})
+    def compose(self, name, *segments):
+        return run({'operation': 'compose', 'urls': [FIXTURES.url(name)], 'width': 720, 'height': 1280, 'synthetic': False, 'ass': '',
+                    'segments': list(segments)})
 
-    def test_parts_are_mono_16khz_mp3_cut_on_the_part_grid(self):
-        job = self.audio('talk.mp4')
-        self.assertEqual((job['status'], job['files']), ('completed', 3), job)
-        self.assertAlmostEqual(job['duration'], 25, delta=0.05)
-        self.assert_outputs_only(job)
-        lengths = []
-        for n, path in enumerate(job['outputs']):
-            self.assertTrue(path.endswith(f'output{n}.mp3'))
-            info = ffprobe(path)
-            stream = info['streams'][0]
-            self.assertEqual((info['format']['format_name'], stream['codec_name'], stream['sample_rate'], stream['channels']), ('mp3', 'mp3', '16000', 1))
-            self.assertLess(os.path.getsize(path), server.MAX_SPEECH_PART)
-            self.assert_decodes(path)
-            lengths.append(float(info['format']['duration']))
-        # MP3 frames (72 ms at 16 kHz) and the encoder's padding add a little to each part's stated length.
-        for got, want in zip(lengths, (10, 10, 5)): self.assertAlmostEqual(got, want, delta=0.15)
-        # The tone at 10.0-10.5 s opens part 1 and is not in part 0: the parts start exactly on the grid.
-        self.assertGreater(loudness(job['outputs'][1], 0.05, 0.4), -30)
-        self.assertLess(loudness(job['outputs'][1], 0.7, 2), -60)
-        self.assertLess(loudness(job['outputs'][0], 9.2, 0.7), -60)
-        # A larger part size gives fewer parts; the default is used when none is asked for.
-        self.assertEqual(self.audio('talk.mp4', part=180)['files'], 1)
-        self.assertEqual(run({'operation': 'audio', 'url': FIXTURES.upload_url('voice.wav')})['files'], 1)
+    def test_many_cuts_keep_picture_and_sound_the_same_length(self):
+        # 40 kept parts of 0.2 s with 0.1 s cut between them, on the 1/30 s grid the Worker snaps cuts to, 0.5 s in.
+        keep = [[round(k * 0.3, 6), round(k * 0.3 + 0.2, 6)] for k in range(40)]
+        job = self.compose('film.mp4', {'input': 0, 'kind': 'video', 'trim': 0.5, 'duration': 8.0, 'audio': 1, 'keep': keep})
+        self.assertEqual(job['status'], 'completed', job)
+        info = ffprobe(job['outputs'][0], '-count_frames')
+        video = next(s for s in info['streams'] if s['codec_type'] == 'video')
+        audio = next(s for s in info['streams'] if s['codec_type'] == 'audio')
+        self.assertEqual(int(video['nb_read_frames']), 240)
+        self.assertAlmostEqual(float(audio['duration']), 8.0, delta=0.03)
+        # The sound runs on through every kept part (nothing padded with silence at the end).
+        self.assertGreater(loudness(job['outputs'][0], 7.5, 0.4), -30)
 
-    def test_silence_has_no_parts_and_files_without_sound_are_named(self):
-        quiet = self.audio('quiet.mp4')
-        self.assertEqual((quiet['status'], quiet['files'], quiet['outputs']), ('completed', 0, []))
-        self.assertAlmostEqual(quiet['duration'], 3, delta=0.1)
-        self.assertEqual(os.listdir(quiet['dir']), [])
-        for name, code in (('mute.mp4', 'MEDIA_NO_AUDIO'), ('photo.jpg', 'MEDIA_NO_AUDIO'), ('long.wav', 'MEDIA_TOO_LONG'), ('broken.bin', 'MEDIA_FORMAT')):
-            self.assert_fails({'operation': 'audio', 'url': FIXTURES.upload_url(name), 'part': 10}, code, network=True)
+    def test_cuts_remove_the_parts_between_kept_ranges(self):
+        # The bands clip, its own sound silenced from 1 to 2 s: keeping 0–1 s and 2–3 s leaves 2 s of steady tone.
+        make('gap.mp4', '-i', str(FIXTURES.dir / 'bands.mp4'), '-af', "volume=0:enable='between(t,1,2)'", '-c:v', 'copy', '-c:a', 'aac')
+        job = self.compose('gap.mp4', {'input': 0, 'kind': 'video', 'duration': 2.0, 'audio': 1, 'keep': [[0, 1], [2, 3]]})
+        self.assertEqual(job['status'], 'completed', job)
+        self.assertAlmostEqual(job['duration'], 2.0)
+        for start in (0.2, 0.9, 1.1, 1.7): self.assertGreater(loudness(job['outputs'][0], start, 0.2), -30, start)
 
-    def test_invalid_audio_payloads_fail_before_any_download(self):
-        url = FIXTURES.upload_url('talk.mp4')
-        for payload in ({'url': url, 'part': 5}, {'url': url, 'part': 181}, {'url': url, 'part': '20'}, {'url': url, 'part': True},
-                        {'url': 'https://attacker.example' + url.split(FIXTURES.origin, 1)[1], 'part': 10}, {'url': None}, {}):
-            self.assert_fails({'operation': 'audio', **payload}, 'MEDIA_INVALID')
+    def test_the_crop_follows_the_speaker_on_the_segment_clock_before_the_cuts(self):
+        # On the red band (left), then a jump to the blue band (right) 1 s into the segment's window.
+        track = [[0, 1 / 6], [1, 1 / 6], [1, 5 / 6]]
+        job = self.compose('bands.mp4', {'input': 0, 'kind': 'video', 'duration': 2.0, 'trim': 1.0, 'audio': 1, 'follow': track})
+        self.assertEqual(job['status'], 'completed', job)
+        mp4 = job['outputs'][0]
+        for x in (10, 360, 710): self.assertTrue(near(pixel(mp4, 0.5, x, 640), (255, 0, 0)), f'red fills the frame at {x}')
+        for x in (10, 360, 710): self.assertTrue(near(pixel(mp4, 1.5, x, 640), (0, 0, 255)), f'blue fills the frame at {x}')
+        # With 0–0.5 s and 1.2–2 s of the window kept, the jump comes 0.5 s into the cut segment.
+        job = self.compose('bands.mp4', {'input': 0, 'kind': 'video', 'duration': 1.3, 'trim': 1.0, 'audio': 1, 'follow': track,
+                                         'keep': [[0, 0.5], [1.2, 2.0]]})
+        self.assertEqual(job['status'], 'completed', job)
+        self.assertTrue(near(pixel(job['outputs'][0], 0.25, 360, 640), (255, 0, 0)))
+        self.assertTrue(near(pixel(job['outputs'][0], 0.9, 360, 640), (0, 0, 255)))
+        # Without a path the wide clip is cover-cropped around its middle (the green band).
+        self.assertTrue(near(pixel(self.compose('bands.mp4', {'input': 0, 'kind': 'video', 'duration': 1})['outputs'][0], 0.5, 360, 640), (0, 255, 0)))
 
-    def test_parts_are_served_as_mp3(self):
-        httpd = ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
-        threading.Thread(target=httpd.serve_forever, daemon=True).start()
-        base = f'http://127.0.0.1:{httpd.server_address[1]}'
-        id = '33333333-2222-4333-8444-555555555555'
-        try:
-            body = json.dumps({'id': id, 'operation': 'audio', 'url': FIXTURES.upload_url('voice.wav'), 'part': 60}).encode()
-            with NO_PROXY.open(urllib.request.Request(f'{base}/jobs', data=body, method='POST'), timeout=30) as r: self.assertEqual(r.status, 202)
-            deadline = time.time() + 60
-            while time.time() < deadline:
-                with NO_PROXY.open(f'{base}/jobs/{id}', timeout=30) as r: status = json.loads(r.read())
-                if status['status'] != 'running': break
-                time.sleep(0.1)
-            self.assertEqual(status['status'], 'completed')
-            self.assertEqual(status['files'], 1)
-            with NO_PROXY.open(f'{base}/jobs/{id}/file/0', timeout=30) as r:
-                self.assertEqual(r.headers['Content-Type'], 'audio/mpeg')
-                data = r.read()
-                self.assertTrue(data[:3] == b'ID3' or data[0] == 0xff, data[:4])
-        finally:
-            httpd.shutdown(); httpd.server_close()
-            with server.LOCK:
-                for job in server.JOBS.values(): shutil.rmtree(job['dir'], ignore_errors=True)
-                server.JOBS.clear()
+    def test_invalid_cuts_and_paths_fail_before_any_download(self):
+        video = lambda **s: {'input': 0, 'kind': 'video', 'duration': 2.0, **s}
+        for segment in (video(keep=[]), video(keep=[[1, 2], [1.5, 3]]), video(keep=[["0,1)+1", 2]]), video(keep=[[0, 1]]),
+                        video(keep=[[0, 1, 2]]), video(keep='0-2'), video(keep=[[0, 1]] * 301),
+                        video(follow=[]), video(follow=[[1, 0.5], [0.5, 0.5]]), video(follow=[[0, 1.5]]), video(follow=[["0,1)+1", 0.5]]),
+                        video(follow=[[0, 0.5]] * 401)):
+            self.assert_fails({'operation': 'compose', 'urls': [FIXTURES.url('bands.mp4')], 'width': 720, 'height': 1280,
+                               'synthetic': False, 'ass': '', 'segments': [segment]}, 'MEDIA_INVALID')
+
+    def test_inspect_allows_long_videos_only_when_asked(self):
+        self.assertEqual(run({'operation': 'inspect', 'url': FIXTURES.url('long.wav')}).get('error'), 'MEDIA_TOO_LONG')
+        job = run({'operation': 'inspect', 'url': FIXTURES.url('long.wav'), 'maxSeconds': 7200})
+        self.assertEqual(job['status'], 'completed', job)
+        self.assertAlmostEqual(job['duration'], 601, delta=0.5)
+        self.requests = len(FIXTURES.requests)
+        for bad in (5, 7201, '600', True):
+            self.assert_fails({'operation': 'inspect', 'url': FIXTURES.url('long.wav'), 'maxSeconds': bad}, 'MEDIA_INVALID')
+
+def detector_ready():
+    """The face detector needs OpenCV and the YuNet model (both in the renderer image; YUNET_MODEL points elsewhere)."""
+    return importlib.util.find_spec('cv2') is not None and Path(server.YUNET_MODEL).exists()
+
+class TrackTest(RendererTest):
+    """"Follow the speaker" (ported from rech-bg): the crop path from face detections (made-up faces, no OpenCV), the
+    crop filter, and the 'track' operation."""
+    WIDE = 16 / 9  # the 9:16 frame keeps 0.316 of a 16:9 video's width
+
+    @staticmethod
+    def faces(xs, size=0.12):
+        """One face per sample at the given centres (None: no face); 4 samples a second."""
+        return [[] if x is None else [(x, 0.4, size, size * 16 / 9)] for x in xs]
+
+    def assertValid(self, points):
+        self.assertLessEqual(len(points), server.MAX_TRACK_POINTS)
+        for i, (t, x) in enumerate(points):
+            self.assertTrue(0 <= x <= 1)
+            self.assertEqual((t, x), (round(t, 2), round(x, 3)))
+            if i: self.assertGreaterEqual(t, points[i - 1][0])
+            if i > 1: self.assertGreater(t, points[i - 2][0], 'at most one jump at a time')
+
+    def test_a_still_speaker_gives_one_point_and_small_moves_do_not_move_the_crop(self):
+        self.assertEqual(server.track_path(self.faces([0.3] * 40), [], self.WIDE), {'v': 1, 'points': [[0.0, 0.3]]})
+        # Swaying inside the middle half of the crop (±0.079) keeps it still; a lone misdetection is ignored.
+        sway = [0.3 + 0.05 * ((i // 6) % 2) for i in range(40)]
+        sway[20] = 0.9
+        self.assertEqual(server.track_path(self.faces(sway), [], self.WIDE)['points'], [[0.0, 0.3]])
+
+    def test_a_speaker_who_moves_is_followed_with_a_limited_pan(self):
+        points = server.track_path(self.faces([0.3] * 20 + [0.7] * 40), [], self.WIDE)['points']
+        self.assertValid(points)
+        self.assertEqual(points[0], [0.0, 0.3])
+        self.assertAlmostEqual(points[-1][1], 0.7, places=2)
+        # Holds until the move (5 s), then pans no faster than 0.6 crop widths a second, without a jump.
+        self.assertGreaterEqual(points[1][0], 4.5)
+        for (a, xa), (b, xb) in zip(points, points[1:]):
+            self.assertGreater(b, a)
+            self.assertLessEqual(abs(xb - xa) / (b - a), 0.6 * (9 / 16) / self.WIDE + 0.01)
+        self.assertGreater(points[-1][0] - points[1][0], 1.5)
+
+    def test_a_hard_cut_jumps_at_once_and_a_shot_without_faces_is_centred(self):
+        samples = self.faces([0.3] * 20 + [0.7] * 20 + [None] * 20)
+        points = server.track_path(samples, [5.0, 10.0], self.WIDE)['points']
+        self.assertValid(points)
+        # A hold until the cut, the jump (two points at its time) and the centred shot without a face.
+        self.assertEqual(points, [[0.0, 0.3], [5.0, 0.3], [5.0, 0.7], [10.0, 0.7], [10.0, 0.5]])
+        self.assertAlmostEqual(server.track_path(samples, [5.004], self.WIDE)['points'][1][0], 5.0, msg='floored to 0.01 s')
+        # A cut where the speaker stays put needs no jump.
+        self.assertEqual(server.track_path(self.faces([0.3] * 40), [5.0], self.WIDE)['points'], [[0.0, 0.3]])
+
+    def test_the_main_face_wins_and_gaps_hold_the_last_position(self):
+        # A big face on the left the whole time; a smaller one on the right comes and goes.
+        samples = [[(0.25, 0.4, 0.15, 0.27)] + ([(0.8, 0.4, 0.06, 0.1)] if 10 <= i < 30 else []) for i in range(40)]
+        self.assertEqual(server.track_path(samples, [], self.WIDE)['points'], [[0.0, 0.25]])
+        # Before the first face its position is used; when the face is lost the crop stays where it was.
+        self.assertEqual(server.track_path(self.faces([None] * 8 + [0.6] * 12 + [None] * 20), [], self.WIDE)['points'], [[0.0, 0.6]])
+        # A face near the edge: the crop stops where it still fits in the picture.
+        self.assertEqual(server.track_path(self.faces([0.02] * 20), [], self.WIDE)['points'], [[0.0, 0.158]])
+
+    def test_no_face_or_a_narrow_clip_gives_no_points(self):
+        self.assertEqual(server.track_path(self.faces([None] * 20), [3.0], self.WIDE), {'v': 1, 'points': []})
+        self.assertEqual(server.track_path([], [], self.WIDE), {'v': 1, 'points': []})
+        self.assertEqual(server.track_path(self.faces([0.3] * 20), [], 9 / 16), {'v': 1, 'points': []})
+
+    def test_many_cuts_stay_within_the_point_budget(self):
+        # 300 shots of 2 s, the speaker alternating sides: the biggest jumps stay jumps, the path stays valid.
+        xs = [0.25 if (i // 8) % 2 else 0.75 for i in range(2400)]
+        points = server.track_path(self.faces(xs), [k * 2.0 for k in range(1, 300)], self.WIDE)['points']
+        self.assertValid(points)
+        self.assertGreater(len(points), 100)
+
+    def test_follow_crop_builds_a_flat_sum_and_refuses_bad_paths(self):
+        crop = server.follow_crop([[0, 0.2], [1, 0.2], [1, 0.8], [3, 0.6]], 720, 1280)
+        self.assertEqual(crop, "crop=w='min(iw,ceil(ih*720/1280/2)*2)':h=ih:x='clip((lt(t,0.00)*0.2000"
+                               "+gte(t,0.00)*lt(t,1.00)*(0.2000+0.000000*(t-0.00))"
+                               "+gte(t,1.00)*lt(t,3.00)*(0.8000+-0.100000*(t-1.00))"
+                               "+gte(t,3.00)*0.6000)*iw-ow/2,0,iw-ow)':y=0")
+        # FFmpeg accepts it (a pan with a negative slope included) and keeps the frame's shape: 270 * 9/16 → 152 px wide.
+        frames = subprocess.check_output(['ffmpeg','-nostdin','-v','error','-f','lavfi','-i','color=s=480x270:r=2:d=4','-vf',crop,
+                                          '-pix_fmt','gray','-f','rawvideo','-'])
+        self.assertEqual(len(frames), 8 * 152 * 270)
+        for bad in ([], [[1, 0.5], [0.5, 0.5]], [[0, 1.5]], [["0,1)+1", 0.5]], [[0, 0.5, 1]], 'x', [[0, 0.5]] * 401):
+            with self.assertRaises(ValueError): server.follow_crop(bad, 720, 1280)
+
+    def test_a_video_no_wider_than_the_frame_needs_no_tracking(self):
+        make('upright.mp4', '-f','lavfi','-i','color=c=red:s=180x320:r=30:d=1','-c:v','libx264','-threads','1','-pix_fmt','yuv420p')
+        job = run({'operation': 'track', 'url': FIXTURES.url('upright.mp4'), 'start': 0, 'length': 1})
+        self.assertEqual((job['status'], job['track'], job['files']), ('completed', {'v': 1, 'points': []}, 0), job)
+        self.assertEqual(os.listdir(job['dir']), [], 'nothing is kept')
+        self.requests = len(FIXTURES.requests)
+        for payload in ({'url': FIXTURES.url('upright.mp4'), 'start': -1, 'length': 1}, {'url': FIXTURES.url('upright.mp4'), 'start': 0, 'length': 601},
+                        {'url': FIXTURES.url('upright.mp4'), 'start': '0', 'length': 1}, {'url': 'https://attacker.example/x', 'start': 0, 'length': 1}):
+            self.assert_fails({'operation': 'track', **payload}, 'MEDIA_INVALID')
+
+    @unittest.skipUnless(detector_ready(), 'needs OpenCV and the YuNet model (renderer image, or YUNET_MODEL)')
+    def test_samples_four_frames_a_second_of_the_part_and_finds_hard_cuts(self):
+        make('cut.mp4', '-f','lavfi','-i','testsrc2=s=640x360:r=30:d=3','-f','lavfi','-i','color=c=red:s=640x360:r=30:d=1.5',
+             '-filter_complex','[0][1]concat=n=2:v=1:a=0','-c:v','libx264','-threads','1','-pix_fmt','yuv420p')
+        directory = tempfile.mkdtemp(dir=WORK)
+        samples, cuts = server.face_samples(str(FIXTURES.dir / 'cut.mp4'), 640, 360, directory, 1.0, 3.5)
+        self.assertEqual(len(samples), 14)
+        self.assertEqual(samples, [[]] * 14)  # a test pattern has no face
+        self.assertEqual(len(cuts), 1)
+        self.assertAlmostEqual(cuts[0], 2.0, delta=0.05, msg='on the part\'s clock')
+        # The whole operation: no face anywhere, so the crop stays centred.
+        job = run({'operation': 'track', 'url': FIXTURES.url('cut.mp4'), 'start': 1, 'length': 3.5})
+        self.assertEqual((job['status'], job['track'], job['duration']), ('completed', {'v': 1, 'points': []}, 3.5), job)
 
 if __name__ == '__main__': unittest.main()
