@@ -6,21 +6,23 @@ import { ApiError, bytes, del, errorText, number, patch, post, seconds, useApi, 
 import { ConfirmDialog, Empty, Tabs, ago, formatDate, tabPanel, useStableCallback } from "./pickers";
 import { LoadMore, useDebounced, usePaged } from "./creators";
 import { BULK_PASTE, parseLookIds, type LookImport } from "../../shared/creators";
+import { BillingTab, OperationsTab } from "./AdminOps";
+import { BrowseHeyGen } from "./HeyGenBrowse";
 import "./pages.css";
 
 type Kind = LibraryItem["kind"];
 type Overview = {
-  users: number; newUsers: number; paying: number; posts: number; failedRuns: number; activeRuns: number; published: number; failedPublications: number;
+  users: number; newUsers: number; paying: number; granted: number; posts: number; failedRuns: number; activeRuns: number; published: number; failedPublications: number;
   config: Record<string, boolean>;
 };
 type AdminItem = LibraryItem & { active: boolean; rawTags: string };
 type AdminCharacter = { id: string; name: string; description: string; gender: string; look_id: string | null; engines: string; active: number; created_at: number; updated_at: number };
 type Message = { id: string; name: string; email: string; topic: string; message: string; created_at: number };
-type Tab = "overview" | "library" | "creators" | "messages";
-const tabIds: Tab[] = ["overview", "library", "creators", "messages"];
+type Tab = "overview" | "operations" | "billing" | "library" | "creators" | "messages";
+const tabIds: Tab[] = ["overview", "operations", "billing", "library", "creators", "messages"];
 const kindNames: Record<Kind, string> = { clip: "Clip", greenscreen: "Green screen", music: "Music" };
 const genderNames: Record<string, string> = { female: "Female", male: "Male", "": "Not specified" };
-const topics: Record<string, string> = { question: "Question", billing: "Billing", partnership: "Partnership", abuse: "Report abuse", other: "Other" };
+const topics: Record<string, string> = { question: "Question", billing: "Billing", withdrawal: "Withdrawal (14 days)", partnership: "Partnership", abuse: "Report abuse", other: "Other" };
 const flagNames: Record<string, string> = {
   media: "Media pipeline", fal: "fal.ai (AI images & clips)", elevenlabs: "ElevenLabs (voices)", heygen: "HeyGen (talking creators)", stripe: "Stripe keys",
   billing: "Billing open", tokens: "Token encryption", tiktok: "TikTok", instagram: "Instagram", youtube: "YouTube", linkedin: "LinkedIn",
@@ -28,7 +30,7 @@ const flagNames: Record<string, string> = {
 const clipTagIdeas = ["activity", "neutral/filler", "reaction", "man", "woman"];
 const MB = 1024 * 1024;
 
-/** Administration (admins only): health, the shared library, library creators and contact messages. */
+/** Administration (admins only): health, operations, billing tools, the shared library, library creators and contact messages. */
 export function AdminPage() {
   const { user } = useAuth();
   if (!user?.admin) return <Navigate to="/app" replace />;
@@ -44,16 +46,19 @@ function AdminConsole() {
       <div className="page-head">
         <div>
           <h1>Admin</h1>
-          <p>Service health, the shared library, library creators and contact messages.</p>
+          <p>Service health and operations, withdrawals and free months, the shared library, library creators and contact messages.</p>
         </div>
       </div>
       <div style={{ marginBottom: 20 }}>
         <Tabs label="Admin sections" idBase="admin" value={tab} onChange={(t) => setParams(t === "overview" ? {} : { tab: t }, { replace: true })} items={[
-          { id: "overview", label: "Overview" }, { id: "library", label: "Library" }, { id: "creators", label: "Creators" }, { id: "messages", label: "Messages" },
+          { id: "overview", label: "Overview" }, { id: "operations", label: "Operations" }, { id: "billing", label: "Billing" },
+          { id: "library", label: "Library" }, { id: "creators", label: "Creators" }, { id: "messages", label: "Messages" },
         ]} />
       </div>
       <div {...tabPanel("admin", tab)}>
         {tab === "overview" && <OverviewTab />}
+        {tab === "operations" && <OperationsTab />}
+        {tab === "billing" && <BillingTab />}
         {tab === "library" && <LibraryTab />}
         {tab === "creators" && <CreatorsTab />}
         {tab === "messages" && <MessagesTab />}
@@ -167,7 +172,7 @@ function OverviewTab() {
   if (error || !data) return <LoadError error={error || "Not available."} retry={() => void reload()} />;
   const stats: { label: string; value: number; sub?: string; bad?: boolean }[] = [
     { label: "Users", value: data.users, sub: `+${number(data.newUsers)} in the last 24 h` },
-    { label: "Paying", value: data.paying, sub: "Active subscriptions" },
+    { label: "Paying", value: data.paying, sub: `Active subscriptions${data.granted ? ` · ${number(data.granted)} free month${data.granted === 1 ? "" : "s"}` : ""}` },
     { label: "Posts made", value: data.posts, sub: "Last 24 h" },
     { label: "Runs in progress", value: data.activeRuns, sub: "Queued or running" },
     { label: "Failed runs", value: data.failedRuns, sub: "Last 24 h", bad: data.failedRuns > 0 },
@@ -627,21 +632,21 @@ function CreatorsTab() {
   );
 }
 
-type AddMode = "looks" | "look" | "portrait";
-/** The three ways to add library creators, in one card. Every form stays mounted, so a running import keeps going. */
+type AddMode = "browse" | "looks" | "look" | "portrait";
+/** The ways to add library creators, in one card. Every form stays mounted, so a running import keeps going. */
 function AddCreators({ onDone }: { onDone: () => void }) {
-  const [mode, setMode] = useState<AddMode>("looks");
+  const [mode, setMode] = useState<AddMode>("browse");
   return (
     <section className="card" aria-labelledby="add-creators-title">
       <div className="card-head" style={{ alignItems: "center" }}>
         <h2 id="add-creators-title">Add library creators</h2>
         <Tabs label="How to add creators" idBase="add-creators" value={mode} onChange={setMode} items={[
-          { id: "looks", label: "HeyGen looks" }, { id: "look", label: "One look, with details" }, { id: "portrait", label: "Portrait" },
+          { id: "browse", label: "Browse HeyGen" }, { id: "looks", label: "HeyGen looks" }, { id: "look", label: "One look, with details" }, { id: "portrait", label: "Portrait" },
         ]} />
       </div>
-      {(["looks", "look", "portrait"] as const).map((m) => (
+      {(["browse", "looks", "look", "portrait"] as const).map((m) => (
         <div key={m} hidden={mode !== m} {...(mode === m && tabPanel("add-creators", m))}>
-          {m === "looks" ? <BulkImport onDone={onDone} /> : m === "look" ? <ImportLook onDone={onDone} /> : <PortraitUpload onDone={onDone} />}
+          {m === "browse" ? <BrowseHeyGen onDone={onDone} /> : m === "looks" ? <BulkImport onDone={onDone} /> : m === "look" ? <ImportLook onDone={onDone} /> : <PortraitUpload onDone={onDone} />}
         </div>
       ))}
     </section>
@@ -912,7 +917,7 @@ function MessagesTab() {
                 <strong>{m.name}</strong>
                 <div className="small"><a href={`mailto:${m.email}?subject=${encodeURIComponent(`Re: ${topics[m.topic] || "Your message"}`)}`} className="link">{m.email}</a></div>
               </td>
-              <td><span className={`chip${m.topic === "abuse" ? " red" : m.topic === "billing" ? " orange" : ""}`}>{topics[m.topic] || m.topic}</span></td>
+              <td><span className={`chip${m.topic === "abuse" ? " red" : m.topic === "billing" || m.topic === "withdrawal" ? " orange" : ""}`}>{topics[m.topic] || m.topic}</span></td>
               <td><MessageText text={m.message} /></td>
             </tr>
           ))}

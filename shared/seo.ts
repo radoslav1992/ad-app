@@ -13,8 +13,8 @@ export const publicPages: Record<string, { title: string; description: string; u
     description: "Start free. Starter $29, Growth $49 and Pro $149 a month for daily short-form posting across your brands.",
     updated: "2026-10-08",
   },
-  "/terms": { title: `Terms of Service — ${PRODUCT.name}`, description: `The terms for using ${PRODUCT.name}.`, updated: "2026-10-08" },
-  "/privacy": { title: `Privacy Policy — ${PRODUCT.name}`, description: `How ${PRODUCT.name} handles your data.`, updated: "2026-10-08" },
+  "/terms": { title: `Terms of Service — ${PRODUCT.name}`, description: `The terms for using ${PRODUCT.name}.`, updated: "2026-10-09" },
+  "/privacy": { title: `Privacy Policy — ${PRODUCT.name}`, description: `How ${PRODUCT.name} handles your data.`, updated: "2026-10-09" },
   "/contact": { title: `Contact — ${PRODUCT.name}`, description: `Questions about ${PRODUCT.name}? Write to us.`, updated: "2026-10-08" },
 };
 const privatePages: Record<string, string> = {

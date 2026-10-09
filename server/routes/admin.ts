@@ -5,26 +5,36 @@ import type { App, Env } from "../types";
 import { MB, now, uid, DAY } from "../types";
 import { isAdmin } from "../auth";
 import { imageInfo, imageFits, extOf, storeStream } from "../storage";
-import { heygenLook } from "../providers/heygen";
+import { fetchHeyGenImage, heygenLook, listHeyGenStockLooks } from "../providers/heygen";
 import { fetchOutput, ProviderError } from "../providers/http";
 import { libraryKinds, libraryView } from "../library";
 import { creatorFilters, pageCursor } from "../characters";
 import { describeError } from "../error-report";
 import { BULK_LOOKS, LOOK_ID, parseLookIds, type LookImport } from "../../shared/creators";
+import { GRANT_PREFIX } from "../billing";
+import { adminWithdrawals } from "../withdrawals";
+import { planGrants } from "../plan-grants";
+import { operationsSnapshot } from "../operations";
 
-// Administration: the shared library (music, clips, green screens), library AI creators, contact messages, health.
+// Administration: health and operations, withdrawals and plan grants, the shared library (music, clips, green
+// screens), library AI creators (also browsed from HeyGen's stock looks) and contact messages.
 export const admin = new Hono<App>();
 admin.use("*", async (c, next) => {
   if (!isAdmin(c.env, c.get("user"))) throw new HTTPException(404, { message: "Not found." });
   await next();
 });
+admin.get("/operations", async (c) => c.json(await operationsSnapshot(c.env)));
+admin.route("/withdrawals", adminWithdrawals);
+admin.route("/grants", planGrants);
 admin.get("/overview", async (c) => {
   const since = now() - DAY;
   const one = async (sql: string, ...args: unknown[]) => (await c.env.DB.prepare(sql).bind(...args).first<{ n: number }>())?.n || 0;
   return c.json({
     users: await one("SELECT COUNT(*) AS n FROM users"),
     newUsers: await one("SELECT COUNT(*) AS n FROM users WHERE created_at>?", since),
-    paying: await one("SELECT COUNT(DISTINCT user_id) AS n FROM subscriptions WHERE status='active'"),
+    // Stripe subscriptions only; administrators' grants are counted apart.
+    paying: await one("SELECT COUNT(DISTINCT user_id) AS n FROM subscriptions WHERE status='active' AND substr(id,1,6)<>?", GRANT_PREFIX),
+    granted: await one("SELECT COUNT(DISTINCT user_id) AS n FROM subscriptions WHERE substr(id,1,6)=? AND period_end>?", GRANT_PREFIX, now()),
     posts: await one("SELECT COUNT(*) AS n FROM posts WHERE created_at>?", since),
     failedRuns: await one("SELECT COUNT(*) AS n FROM runs WHERE status='failed' AND created_at>?", since),
     activeRuns: await one("SELECT COUNT(*) AS n FROM runs WHERE status IN ('queued','running')"),
@@ -166,6 +176,47 @@ async function linkedLooks(env: Env, lookIds: string[]) {
     .bind(JSON.stringify(lookIds)).all<{ id: string; name: string; look_id: string; active: number }>()).results;
   return new Map(rows.map((r) => [r.look_id, r]));
 }
+/**
+ * HeyGen's stock looks, one page (50) at a time, for picking library creators. Each is marked when it is already in
+ * the library; only looks with the Avatar III engine and a preview can be imported (through /characters/import/bulk,
+ * which checks each look again). Previews come through /heygen/image: the page's policy allows only our own images.
+ */
+admin.get("/heygen/looks", async (c) => {
+  if (!c.env.HEYGEN_API_KEY?.trim()) throw new HTTPException(503, { message: "HeyGen isn't set up yet (HEYGEN_API_KEY)." });
+  const page = c.req.query("page") || undefined;
+  if (page && page.length > 1000) throw new HTTPException(400, { message: "This page link isn't valid. Start again from the first page." });
+  let result;
+  try {
+    result = await listHeyGenStockLooks(c.env, page);
+  } catch (e) {
+    const f = lookFailure(e);
+    throw new HTTPException(f.retry ? 502 : 400, { message: f.error });
+  }
+  const shown = result.looks.filter((l) => l.status === "completed");
+  const linked = shown.length ? await linkedLooks(c.env, shown.map((l) => l.id)) : new Map<string, { id: string; name: string; active: number }>();
+  return c.json({
+    looks: shown.map((l) => {
+      const found = linked.get(l.id);
+      return {
+        id: l.id, name: l.name, gender: l.gender, tags: l.tags, engines: l.engines,
+        importable: l.engines.includes("avatar_iii") && !!l.previewImageUrl,
+        library: found ? { id: found.id, name: found.name, active: !!found.active } : null,
+        image: l.previewImageUrl ? `/api/admin/heygen/image?src=${encodeURIComponent(l.previewImageUrl)}` : null,
+      };
+    }),
+    nextPage: result.nextToken,
+  });
+});
+/** A stock look's preview, fetched from HeyGen's own hosts only (never another address), at most 5 MB, images only. */
+admin.get("/heygen/image", async (c) => {
+  let image;
+  try {
+    image = await fetchHeyGenImage(c.req.query("src") || "");
+  } catch {
+    throw new HTTPException(404, { message: "This image isn't available." });
+  }
+  return new Response(image.bytes, { headers: { "Content-Type": image.mime, "Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff" } });
+});
 admin.post("/characters/import", async (c) => {
   const d = z.object({ lookId: z.string().trim().min(1).max(160), name: z.string().trim().max(40).optional(), description: z.string().trim().max(300).default(""), gender: genderInput.default("") }).parse(await c.req.json());
   const existing = (await linkedLooks(c.env, [d.lookId])).get(d.lookId);

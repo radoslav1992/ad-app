@@ -3,7 +3,8 @@
 ## Stack
 
 React 19 + React Router + Vite (client, `src/`), a Hono Worker (`server/`), Cloudflare D1 (the schema in
-`migrations/`: `0001_initial.sql`, then `0002_analytics.sql`, which only adds), a private R2 bucket (`MEDIA`), three Workflows, a Containers pool of three FFmpeg
+`migrations/`: `0001_initial.sql`, then additive migrations: `0002_analytics.sql`, `0003_creator_looks.sql`,
+`0004_operations.sql`), a private R2 bucket (`MEDIA`), three Workflows, a Containers pool of three FFmpeg
 renderers (`renderer/server.py`) and the Workers AI binding for text. Contracts shared by the client and server live
 in `shared/` (formats/specs, plans and credits, captions and on-screen text layout, schedule, renderer payloads).
 
@@ -103,6 +104,13 @@ Auth, sessions, rate limits and Stripe come from rech-bg. Each paid period is a 
 - **Webhooks** always read the current state back from Stripe.
 - **A nightly reconciliation** catches missed events.
 - **Storage** is limited per plan by a trigger.
+- **Free months** (`server/plan-grants.ts`): an administrator's grant is a `subscriptions` row with a `grant_` ID, so
+  it gets its own window and ends by itself. It wins over a lower paid plan; reconciliation, refunds and withdrawals
+  never touch it.
+- **Withdrawal within 14 days** (`server/withdrawals.ts`, `shared/withdrawal.ts`): a first checkout records the
+  express request to start at once (`checkout_consents`) and confirms it by e-mail. An administrator checks the amount
+  and, in one action, cancels the subscription, stops the period's posts and credits (`endPaidAccess`) and refunds
+  what was paid less the larger used share of posts or AI credits.
 
 ## Safety and privacy
 
@@ -119,3 +127,16 @@ Auth, sessions, rate limits and Stripe come from rech-bg. Each paid period is a 
   YouTube `containsSyntheticMedia`).
 - **Deletion:** deleting posts, files, creators or accounts queues R2 cleanup. Work in progress is protected by
   triggers.
+- **Retention:** `server/retention.ts` runs hourly and clears what has expired: run prompts and provider state after
+  30 days, failed publications' tokens, contact messages, trial identifiers, evidence records, accounts never
+  confirmed. Periods: docs/PRIVACY.md.
+
+## Operations
+
+The cron (`server/maintenance.ts`) runs every minute: publishing each minute, run recovery and post stats every 5
+minutes, and at minute 17 the hourly part, which starts with the operator summary (`server/operations.ts`): stuck
+runs, bursts of provider failures by code (HeyGen, fal, ElevenLabs, renderer), overdue or failing publishing,
+accounts ending at scale, failed stats reads and transcriptions, cleanup backlog, Stripe reconciliation problems,
+manual checks and failed stages. It is e-mailed to `ADMIN_EMAILS` when it changes (or every 6 hours) and shown in
+Admin → Operations. Provider work a failed run may have left billing, and refused storage cleanup, are set aside in
+`manual_reviews`. Runbook: docs/OPERATIONS.md.

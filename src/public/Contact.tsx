@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Building2, CircleCheck, Mail, MapPin } from "lucide-react";
 import { errorText, post, useAuth } from "../lib";
 import { Turnstile } from "../Turnstile";
@@ -13,19 +13,23 @@ import "./public.css";
 const topics = [
   ["question", "Question"],
   ["billing", "Billing"],
+  ["withdrawal", "Withdraw from my plan (14 days)"],
   ["partnership", "Partnership"],
   ["abuse", "Report abuse"],
   ["other", "Other"],
 ] as const;
 type Topic = (typeof topics)[number][0];
 const MESSAGE_MAX = 4000;
+const isTopic = (value: string | null): value is Topic => topics.some(([id]) => id === value);
 
 export function Contact() {
   const { user } = useAuth();
   const { config } = usePublicConfig();
+  // Links can open the form on a topic, e.g. /contact?topic=withdrawal from Billing and the terms.
+  const [params] = useSearchParams();
   const [name, setName] = useState(user?.name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
-  const [topic, setTopic] = useState<Topic>("question");
+  const [topic, setTopic] = useState<Topic>(() => { const t = params.get("topic"); return isTopic(t) ? t : "question"; });
   const [message, setMessage] = useState("");
   const [token, setToken] = useState("");
   const [check, setCheck] = useState(0);
@@ -116,6 +120,12 @@ export function Contact() {
               </label>
               {topic === "abuse" && (
                 <p className="notice full">Please include links to the posts or accounts involved, and what is wrong with them.</p>
+              )}
+              {topic === "withdrawal" && (
+                <p className="notice full">
+                  Write from your account's email, or tell us that email, and say that you withdraw from your plan. That's all we need; you can also use the{" "}
+                  <Link className="text-link" to="/terms#withdrawal-form">model withdrawal form</Link>. We confirm by email and refund what is due within 14 days.
+                </p>
               )}
               {siteKey && (
                 <div className="full">

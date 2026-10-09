@@ -1,34 +1,44 @@
 import type { DbUser, Env } from "./types";
 import { now, DAY, HOUR, MINUTE } from "./types";
 import { dispatchDue, refreshAccounts } from "./publishing";
-import { reconcileStripe, allowance } from "./billing";
+import { reconcileStripe, allowance, confirmPendingContracts } from "./billing";
 import { dispatchRun } from "./posts";
 import { failRun } from "./content-workflow";
 import { failAsset } from "./media";
 import { createBatch, workspaceSettings, writeSpecs } from "./workspaces";
 import { refreshMetrics } from "./metrics";
-import { pruneAnalytics } from "./analytics";
+import { applyRetention } from "./retention";
+import { describeError } from "./error-report";
+import { flagForReview, recordMaintenanceRun, recordStageFailures, reportAttention, reviewRuns } from "./operations";
 
 // Cron (every minute): due posts are published at once; every five minutes stuck work is recovered and a batch of
-// post stats is read from the networks; once an hour files are cleaned up, automations make their daily posts and
-// (at 03:17 UTC) Stripe is reconciled.
-async function stage(name: string, work: () => Promise<unknown>) {
-  try {
-    await work();
-  } catch (error) {
-    console.error("Maintenance stage failed", { stage: name, error: (error as Error)?.name, message: String((error as Error)?.message || "").slice(0, 120) });
-  }
-}
+// post stats is read from the networks; once an hour (minute 17) the operator summary goes out first, then files are
+// cleaned up, failed provider work is set aside for a check, retention runs, contracts are confirmed, automations
+// make their daily posts and (at 03:17 UTC) Stripe is reconciled.
 export async function maintenance(e: Env, at = Date.now()) {
-  const d = new Date(at), minute = d.getUTCMinutes();
+  const d = new Date(at), minute = d.getUTCMinutes(), hourly = minute === 17, startedAt = now();
+  // Per pass (passes can overlap): a stage that throws never skips the others, and is reported by the next summary.
+  const failed: string[] = [];
+  const stage = async (name: string, work: () => Promise<unknown>) => {
+    try {
+      await work();
+    } catch (error) {
+      failed.push(name);
+      console.error("Maintenance stage failed", { stage: name, ...describeError(error) });
+    }
+  };
+  // First, so a later stage that fails or runs out of time cannot hold back the operator alert.
+  if (hourly) await stage("summary", () => reportAttention(e));
   await stage("publish", () => dispatchDue(e));
   if (minute % 5 === 0) await stage("runs", () => reconcileRuns(e));
   // Offset from the runs stage; each pass reads at most 40 posts (metrics.ts).
   if (minute % 5 === 2) await stage("stats", () => refreshMetrics(e));
-  if (minute === 17) {
+  if (hourly) {
     await stage("cleanup", () => drainCleanup(e));
     await stage("uploads", () => expireUploads(e));
-    await stage("housekeeping", () => housekeeping(e));
+    await stage("reviews", () => reviewRuns(e));
+    await stage("retention", () => applyRetention(e));
+    await stage("contracts", () => confirmPendingContracts(e));
     await stage("automations", () => runAutomations(e));
     if (d.getUTCHours() === 3) {
       await stage("stripe", () => reconcileStripe(e));
@@ -36,6 +46,9 @@ export async function maintenance(e: Env, at = Date.now()) {
       await stage("social-tokens", () => refreshAccounts(e));
     }
   }
+  // Last: what failed (for the next summary) and, hourly, the run's time (for the operations view).
+  if (failed.length) await recordStageFailures(e, [...failed]).catch(() => console.error("Maintenance stages not recorded"));
+  if (hourly) await recordMaintenanceRun(e, startedAt, failed).catch(() => console.error("Maintenance run not recorded"));
 }
 
 const RUN_CEILING = 3 * HOUR;
@@ -61,11 +74,16 @@ export async function reconcileRuns(e: Env) {
   ).bind(now(), now() - 30 * MINUTE).run();
 }
 
-/** Deletes the R2 files of deleted rows (exact keys and prefixes), a batch at a time. */
+/**
+ * Deletes the R2 files of deleted rows (exact keys and prefixes), a batch at a time. Anything outside the media and
+ * library folders is refused: nothing is deleted and the row moves to the operations view for a manual check.
+ */
 export async function drainCleanup(e: Env) {
   const tasks = (await e.DB.prepare("SELECT prefix FROM cleanup_tasks ORDER BY created_at LIMIT 50").all<{ prefix: string }>()).results;
   for (const { prefix } of tasks) {
-    if (!/^(media|library)\/[A-Za-z0-9._/-]+$/.test(prefix)) {
+    if (!/^(media|library)\/[A-Za-z0-9._/-]+$/.test(prefix) || prefix.includes("..")) {
+      console.error("Storage cleanup refused");
+      await flagForReview(e, "cleanup", prefix, null, "refused");
       await e.DB.prepare("DELETE FROM cleanup_tasks WHERE prefix=?").bind(prefix).run();
       continue;
     }
@@ -89,17 +107,6 @@ async function expireUploads(e: Env) {
   for (const a of checking) await failAsset(e, a.id, "Checking this file took too long. Try uploading it again.");
   // Failed uploads are kept a week so people can see why, then removed.
   await e.DB.prepare("DELETE FROM media_assets WHERE status='failed' AND updated_at<?").bind(now() - 7 * DAY).run();
-}
-async function housekeeping(e: Env) {
-  const t = now();
-  await e.DB.batch([
-    e.DB.prepare("DELETE FROM sessions WHERE expires_at<?").bind(t),
-    e.DB.prepare("DELETE FROM auth_tokens WHERE expires_at<?").bind(t),
-    e.DB.prepare("DELETE FROM rate_limits WHERE expires_at<?").bind(t),
-    e.DB.prepare("DELETE FROM oauth_states WHERE expires_at<?").bind(t),
-    e.DB.prepare("DELETE FROM billing_events WHERE created_at<?").bind(t - 90 * DAY),
-  ]);
-  await pruneAnalytics(e, t);
 }
 
 /** Automations: once a day, workspaces that asked for it get fresh posts for review (when their queue runs low). */

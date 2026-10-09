@@ -6,7 +6,9 @@ import { uid, now, ready, mediaEnabled, DAY } from "../types";
 import { defer, hit, rate, sendMail, verifyTurnstile } from "../security";
 import { PRODUCT } from "../../shared/brand";
 
-export const contactTopics = { question: "Question", billing: "Billing", partnership: "Partnership", abuse: "Report abuse", other: "Other" } as const;
+export const contactTopics = {
+  question: "Question", billing: "Billing", withdrawal: "Withdraw from my plan (14 days)", partnership: "Partnership", abuse: "Report abuse", other: "Other",
+} as const;
 /** Unauthenticated API: site configuration and the contact form. */
 export const publicRoutes = new Hono<App>();
 publicRoutes.get("/api/public/config", (c) =>

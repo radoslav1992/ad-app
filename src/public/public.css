@@ -315,6 +315,8 @@
 .legal-doc ul { padding-left: 22px; }
 .legal-doc li { margin-bottom: 6px; }
 .legal-doc a { color: #1e2433; text-underline-offset: 2px; }
+.legal-doc .model-form { background: #fff; border: 1px solid #e4e7ec; border-radius: 14px; padding: 14px 20px 6px; margin: 16px 0 12px; }
+.legal-doc .model-form h3 { margin-top: 4px; }
 .legal-doc .toc { background: #fff; border: 1px solid #e4e7ec; border-radius: 18px; padding: 20px 24px; margin-bottom: 8px; }
 .legal-doc .toc h2 { margin: 0 0 10px; font-size: 18px; }
 .legal-doc .toc ol { margin: 0; padding-left: 22px; columns: 2; column-gap: 32px; }

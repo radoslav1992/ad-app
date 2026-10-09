@@ -66,3 +66,5 @@ SQLite/R2 stand-ins with mocked providers. They are not a substitute for a smoke
 - [docs/SOCIAL.md](docs/SOCIAL.md): developer apps and reviews for TikTok, Instagram, YouTube and LinkedIn.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how a post is made and published, credits, safety.
 - [docs/DESIGN.md](docs/DESIGN.md): the look and the onboarding/dashboard flow.
+- [docs/OPERATIONS.md](docs/OPERATIONS.md): alerts, the operations view, withdrawals, free months, retention, rollback.
+- [docs/PRIVACY.md](docs/PRIVACY.md): what is kept for how long, and what account deletion removes.

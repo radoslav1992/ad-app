@@ -17,7 +17,7 @@ npx wrangler r2 bucket create ad-app-media
 Then apply the schema (once, and again whenever a new file lands in `migrations/`):
 
 ```sh
-npm run db:remote                        # applies every migration not applied yet (0001_initial.sql, 0002_analytics.sql)
+npm run db:remote                        # applies every migration not applied yet (0001_initial.sql … 0004_operations.sql)
 ```
 
 **0002 (analytics):** run `npm run db:remote` *before* deploying the version that uses it. It only adds columns to
@@ -26,6 +26,14 @@ applied files in `d1_migrations`, so 0001 is not run again. To check: `npx wrang
 The new social scopes (TikTok `video.list`, Instagram `instagram_business_manage_insights`) need the app changes and
 reviews in `docs/SOCIAL.md`; existing connections reconnect to allow stats.
 
+**0004 (operations):** apply it with `npm run db:remote` *before* deploying the version that uses it, like 0002. It
+only adds: tables `checkout_consents`, `withdrawals`, `operations_state` and `manual_reviews`, the nullable column
+`terms_acceptances.account_deleted_at`, the trigger `evidence_account_deleted` (marks evidence records when an account
+is deleted) and indexes for retention and the operations summary. The running version ignores all of them. Without it
+the new version's checkout, admin Billing and Operations tabs and the hourly summary fail (`no such table`). Check with
+`npx wrangler d1 migrations list ad-app --remote` (nothing left to apply) and
+`npx wrangler d1 execute ad-app --remote --command "PRAGMA table_info(terms_acceptances)"` (shows `account_deleted_at`).
+
 - **R2:** add a lifecycle rule to *abort incomplete multipart uploads after 1 day*. Do **not** add an object-expiry
   rule; the app deletes files itself.
 - **Workers Paid** is required for Containers and longer CPU time. Containers must be enabled on the account; the
@@ -33,7 +41,12 @@ reviews in `docs/SOCIAL.md`; existing connections reconnect to allow stats.
 - **Workers AI** is used through the `AI` binding for brand profiles and post ideas (`TEXT_MODEL`, default
   `openai/gpt-5.6-luna`, the same model rech-bg uses).
 - **Email sending:** set up `hookstreak.com` for sending in Cloudflare Email, the same way as `rechbg.com` for
-  rech-bg. The sender `hello@hookstreak.com` is already allowed in `wrangler.jsonc`.
+  rech-bg. The sender `hello@hookstreak.com` is already allowed in `wrangler.jsonc`. The same binding sends the
+  contract confirmation after checkout and the operations e-mail (below).
+- **Operations e-mail:** every address in `ADMIN_EMAILS` gets "Hookstreak: maintenance needs a look" when the hourly
+  maintenance finds something overdue or failing, at most every 6 hours for the same state (docs/OPERATIONS.md
+  section 2). Nothing to set up beyond `ADMIN_EMAILS` and email sending; check deliverability with the list in
+  docs/OPERATIONS.md section 10.
 - **Domains:** `wrangler.jsonc` attaches `hookstreak.com`, `www.hookstreak.com`, `hookstreak.app` and
   `www.hookstreak.app` to the Worker as custom domains on deploy (both zones must be on this Cloudflare account,
   with no other DNS records for those names). The Worker sends every host except `SITE_URL`'s to `SITE_URL` with
@@ -49,7 +62,7 @@ Set these in Workers → Settings → Variables and Secrets. `keep_vars` keeps t
 | --- | --- | --- |
 | `SITE_URL` | text | Public origin, `https://hookstreak.com` |
 | `COMPANY_NAME`, `COMPANY_ADDRESS`, `CONTACT_EMAIL` | text | Operator shown on legal pages (required before sign-ups) |
-| `EMAIL_FROM`, `ADMIN_EMAILS` | text | Sender (defaults to `CONTACT_EMAIL`); comma-separated admin emails (verified accounts become admins) |
+| `EMAIL_FROM`, `ADMIN_EMAILS` | text | Sender (defaults to `CONTACT_EMAIL`); comma-separated admin emails (verified accounts become admins; they also get the operations e-mail and contact messages) |
 | `REGISTRATION_ENABLED`, `BILLING_ENABLED`, `MEDIA_ENABLED` | text | `true` to open sign-ups, payments, rendering/AI |
 | `TRIAL_HASH_SECRET` | secret | Long random string |
 | `TURNSTILE_SECRET_KEY` / `TURNSTILE_SITE_KEY` | secret / text | Bot checks |
@@ -87,6 +100,9 @@ Set these in Workers → Settings → Variables and Secrets. `keep_vars` keeps t
    - `invoice.paid` and `invoice.payment_failed`
    - `charge.refunded` and `charge.dispute.created`
 3. Configure the Customer Portal: cancellations, card updates, and switching between the three prices.
+4. Nothing else is needed for withdrawals: a first checkout asks for the express request to start at once (shown again
+   on Stripe's page as custom text, confirmed by e-mail), and refunds for withdrawals are made from Admin → Billing
+   with the same secret key (docs/OPERATIONS.md section 4).
 
 ## 4. Content library (as an admin)
 
@@ -106,8 +122,10 @@ Sign in with an address in `ADMIN_EMAILS` (verified), then open **Admin**. Uploa
   - The list below searches names and descriptions and filters by gender, on/off and kind. Select rows to switch them
     on or off or to set their gender in one go. Switched-off creators leave people's lists; posts already made keep
     them.
-  - Look IDs come from your HeyGen account; the app doesn't browse HeyGen's catalogue. Before adding HeyGen's stock
-    avatars, check that your HeyGen plan and terms allow using them through the API in your product.
+  - *Browse HeyGen* pages through HeyGen's stock looks with previews, filters by gender and engine (only looks with
+    Avatar III can be imported), marks looks already in the library and imports a selection through the same bulk
+    import. Before adding HeyGen's stock avatars, check that your HeyGen plan and terms allow using them through the
+    API in your product; the page asks you to confirm it.
 
 You need the rights to everything you upload, including permission for every person shown.
 
@@ -123,7 +141,8 @@ You need the rights to everything you upload, including permission for every per
    4. Approve a post.
    5. Create a Wall of Text and an AI UGC post.
    6. Connect one account per network and publish a test post (private where the network allows).
-   7. Buy and cancel a plan in Stripe test mode.
+   7. Buy and cancel a plan in Stripe test mode; check the confirmation e-mail.
+   8. Buy another, then withdraw it from Admin → Billing (the refund shows in Stripe) and give yourself a free month.
 
 ## Known limits
 
@@ -138,5 +157,8 @@ You need the rights to everything you upload, including permission for every per
 - **Live trends:** there is no live trend or "remix" data from the networks. Ideas are built on the curated hook
   patterns.
 - **Legal pages:** the terms and privacy policy are a starting point; have them reviewed for your business and
-  markets.
+  markets — in particular the withdrawal section (14 days, refund less the larger used share of posts or credits)
+  and the retention periods (docs/PRIVACY.md).
+- **HeyGen stock list:** the browse view follows rech-bg's use of `GET /v3/avatars/looks?ownership=public`; it is
+  tested against mocked responses (three list shapes), not against HeyGen's live catalogue.
 - **Talking creator prices:** these are estimated from the script length (about 15 characters per second).

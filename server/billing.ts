@@ -3,9 +3,12 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { paidPlans, planById, plans, TRIAL_DAYS, type PaidPlanId, type PlanId } from "../shared/plans";
+import { IMMEDIATE_START_TEXT, IMMEDIATE_START_VERSION, WITHDRAWAL_DAYS } from "../shared/withdrawal";
 import type { App, Env, DbUser } from "./types";
 import { now, ready, uid, DAY, GB } from "./types";
-import { hmac, origin, rate, sha } from "./security";
+import { hmac, origin, rate, sendMail, sha } from "./security";
+import { writeState } from "./ops-state";
+import { PRODUCT } from "../shared/brand";
 
 export const billing = new Hono<App>();
 export function stripe(env: Env) {
@@ -14,6 +17,8 @@ export function stripe(env: Env) {
 }
 /** A renewing subscription keeps its last paid period this long while Stripe collects the new invoice. */
 export const RENEWAL_GRACE = 3 * DAY;
+/** Subscriptions an administrator granted (testers, partners): no Stripe behind them, see plan-grants.ts. */
+export const GRANT_PREFIX = "grant_";
 
 /**
  * Identifies a free allowance across account deletion without keeping the address: an HMAC of the mailbox keyed with
@@ -42,20 +47,29 @@ export type Allowance = Awaited<ReturnType<typeof allowance>>;
 /**
  * The account's plan and the usage window it spends from: AI credits (`used`/`limit`) and posts
  * (`postsUsed`/`postsLimit`). A paid period has its own window (user:subscription:period_start); the free allowance
- * is one lasting window (user:trial), once per mailbox.
+ * is one lasting window (user:trial), once per mailbox. An administrator's grant is a subscription row of its own
+ * (GRANT_PREFIX), so it gets a fresh window and ends by itself.
  */
 export async function allowance(e: Env, u: DbUser) {
-  // An incomplete subscription (a checkout that was abandoned or not paid yet) gives no access.
-  const sub = await e.DB.prepare(
-    "SELECT s.*,st.status AS stripe_status FROM subscriptions s LEFT JOIN stripe_status st ON st.subscription_id=s.id WHERE s.user_id=? AND s.status IN ('active','trialing','past_due','unpaid') ORDER BY s.status='active' DESC, s.period_end DESC LIMIT 1",
-  ).bind(u.id).first<any>();
+  // An incomplete subscription (a checkout that was abandoned or not paid yet) gives no access; ended grants never
+  // count. A running grant wins over a paid subscription unless the customer pays for a higher plan.
+  const rows = (await e.DB.prepare(
+    "SELECT s.*,st.status AS stripe_status FROM subscriptions s LEFT JOIN stripe_status st ON st.subscription_id=s.id WHERE s.user_id=?1 AND s.status IN ('active','trialing','past_due','unpaid') AND NOT (substr(s.id,1,6)=?2 AND s.period_end<=?3) ORDER BY s.status='active' DESC, s.period_end DESC LIMIT 10",
+  ).bind(u.id, GRANT_PREFIX, now()).all<any>()).results;
+  const rank = (plan: string) => plans.findIndex((p) => p.id === plan);
+  const grant = rows.find((r) => String(r.id).startsWith(GRANT_PREFIX));
+  const paid = rows.find((r) => !String(r.id).startsWith(GRANT_PREFIX));
+  const paidActive = paid?.status === "active" && paid.period_end + (paid.cancel_at_period_end ? 0 : RENEWAL_GRACE) > now();
+  const sub = grant && !(paidActive && rank(paid.plan) > rank(grant.plan)) ? grant : paid || null;
+  const granted = !!sub && sub === grant;
   // A renewing subscription keeps its last paid period until Stripe confirms the new invoice.
   const active = !!sub && sub.status === "active" && sub.period_end + (sub.cancel_at_period_end ? 0 : RENEWAL_GRACE) > now();
   const plan = planById(active ? sub.plan : "free");
   const window = active ? `${u.id}:${sub.id}:${sub.period_start}` : `${u.id}:trial`;
   // Same plan: the window keeps its quota. A downgrade inside a period uses the new plan's allowance; an upgrade adds
-  // only the unused share of the difference, so upgrading on the last day does not unlock a whole month.
-  const left = active && sub.period_end > sub.period_start
+  // only the unused share of the difference, so upgrading on the last day does not unlock a whole month. A grant's
+  // window is always new, with the whole plan.
+  const left = active && !granted && sub.period_end > sub.period_start
     ? Math.min(1, Math.max(0, (sub.period_end - now()) / (sub.period_end - sub.period_start))) : 1;
   const trial = await trialKey(e, u.email);
   const newTrial = !active && !(await e.DB.prepare("SELECT 1 FROM usage_windows WHERE id=?").bind(window).first());
@@ -91,10 +105,13 @@ export async function allowance(e: Env, u: DbUser) {
     postsLimit: usage?.posts_quota ?? plan.posts,
     window,
     periodEnd: active ? (sub.period_end as number) : null,
-    hasSubscription: !!sub,
+    /** A Stripe subscription (only those can be managed in the Customer Portal); a grant is not one. */
+    hasSubscription: !!paid,
+    /** The plan is an administrator's grant (until periodEnd), not a paid subscription. */
+    granted: granted && active,
     /** Stripe reports the latest payment as failed (it retries the card meanwhile), or the period ended unpaid. */
-    paymentIssue: !!sub && (["past_due", "unpaid"].includes(sub.stripe_status ?? sub.status) ||
-      (sub.status === "active" && !sub.cancel_at_period_end && sub.period_end + RENEWAL_GRACE < now())),
+    paymentIssue: !!paid && !granted && (["past_due", "unpaid"].includes(paid.stripe_status ?? paid.status) ||
+      (paid.status === "active" && !paid.cancel_at_period_end && paid.period_end + RENEWAL_GRACE < now())),
   };
 }
 
@@ -103,10 +120,13 @@ billing.post("/checkout", async (c) => {
   if (!u.verified) throw new HTTPException(403, { message: "Confirm your email before subscribing." });
   if (c.env.BILLING_ENABLED !== "true" || !ready(c.env)) throw new HTTPException(503, { message: "Subscriptions are not open yet." });
   await rate(c, "checkout", 8, 3600, u.id);
-  const parsed = z.object({ plan: z.enum(paidPlans) }).safeParse(await c.req.json());
+  const parsed = z.object({ plan: z.enum(paidPlans), immediateStart: z.boolean().optional() }).safeParse(await c.req.json());
   const requested = parsed.success ? parsed.data.plan : null;
   let id = requested && priceIds(c.env)[requested];
   if (!requested || !id) throw new HTTPException(400, { message: "This plan is not available." });
+  // The plan starts within the withdrawal period only at the consumer's express request (CRD Art. 14(3)).
+  if (parsed.data?.immediateStart !== true)
+    throw new HTTPException(400, { message: "Confirm that you want your plan to start straight after payment." });
   const s = stripe(c.env);
   let customer = u.stripe_customer;
   if (!customer) {
@@ -148,13 +168,18 @@ billing.post("/checkout", async (c) => {
       allow_promotion_codes: true,
       ...(tax && { automatic_tax: { enabled: true }, tax_id_collection: { enabled: true }, billing_address_collection: "required" as const, customer_update: { address: "auto" as const, name: "auto" as const } }),
       client_reference_id: u.id,
-      metadata: { user_id: u.id },
-      subscription_data: { metadata: { user_id: u.id } },
+      // The request given on our page, repeated where the customer pays.
+      custom_text: { submit: { message: IMMEDIATE_START_TEXT } },
+      metadata: { user_id: u.id, immediate_start: IMMEDIATE_START_VERSION },
+      subscription_data: { metadata: { user_id: u.id, immediate_start: IMMEDIATE_START_VERSION } },
       success_url: origin(c.env, c.req.raw) + "/app/billing?success=1",
       cancel_url: origin(c.env, c.req.raw) + "/app/billing?cancelled=1",
     },
-    { idempotencyKey: `checkout-${intent.intent_id}-${id}` },
+    { idempotencyKey: `checkout-v2-${intent.intent_id}-${id}` },
   );
+  // The consent for this checkout; it is confirmed by email once the payment completes.
+  await c.env.DB.prepare("INSERT OR IGNORE INTO checkout_consents(session_id,user_id,plan,version,created_at) VALUES (?,?,?,?,?)")
+    .bind(session.id, u.id, plan, IMMEDIATE_START_VERSION, now()).run();
   return c.json({ url: session.url });
 });
 /** Re-reads the customer's subscriptions from Stripe (on return from Checkout or the portal). */
@@ -173,23 +198,29 @@ async function syncCustomer(e: Env, userId: string, customer: string) {
   if (statements.length) await e.DB.batch(statements);
   return statements.length > 0;
 }
-/** Nightly backstop for missed webhooks: customers whose plan looks doubtful are re-read from Stripe. */
+/**
+ * Nightly backstop for missed webhooks: customers whose plan looks doubtful are re-read from Stripe. Grants have no
+ * Stripe subscription behind them and are never part of it. The outcome is kept for the operations summary.
+ */
 export async function reconcileStripe(e: Env) {
   if (e.BILLING_ENABLED !== "true" || !e.STRIPE_SECRET_KEY) return;
+  // The least recently checked first: customers who stay doubtful for long (e.g. unpaid) cannot take every slot.
   const users = (await e.DB.prepare(
     `SELECT u.id,u.stripe_customer FROM users u LEFT JOIN stripe_reconciled r ON r.user_id=u.id WHERE u.stripe_customer IS NOT NULL AND (
-      EXISTS(SELECT 1 FROM subscriptions s WHERE s.user_id=u.id AND ((s.status='active' AND s.period_end<?1) OR s.status IN ('past_due','incomplete','trialing','unpaid')))
-      OR (EXISTS(SELECT 1 FROM checkout_intents c WHERE c.user_id=u.id AND c.expires_at>?1-2*86400) AND NOT EXISTS(SELECT 1 FROM subscriptions s WHERE s.user_id=u.id AND s.status='active'))
+      EXISTS(SELECT 1 FROM subscriptions s WHERE s.user_id=u.id AND substr(s.id,1,6)<>?2 AND ((s.status='active' AND s.period_end<?1) OR s.status IN ('past_due','incomplete','trialing','unpaid')))
+      OR (EXISTS(SELECT 1 FROM checkout_intents c WHERE c.user_id=u.id AND c.expires_at>?1-2*86400) AND NOT EXISTS(SELECT 1 FROM subscriptions s WHERE s.user_id=u.id AND substr(s.id,1,6)<>?2 AND s.status='active'))
     ) ORDER BY COALESCE(r.checked_at,0) LIMIT 50`,
-  ).bind(now()).all<{ id: string; stripe_customer: string }>()).results;
-  let changed = 0;
+  ).bind(now(), GRANT_PREFIX).all<{ id: string; stripe_customer: string }>()).results;
+  let changed = 0, failed = 0;
   for (const u of users) {
     try { if (await syncCustomer(e, u.id, u.stripe_customer)) changed++; }
-    catch (error) { console.error("Stripe reconciliation failed", { userId: u.id, error: (error as Error)?.name }); }
+    catch (error) { failed++; console.error("Stripe reconciliation failed", { userId: u.id, error: (error as Error)?.name }); }
+    // Also after a failure: a customer Stripe keeps rejecting is not retried ahead of everyone else.
     await e.DB.prepare("INSERT INTO stripe_reconciled(user_id,checked_at) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET checked_at=excluded.checked_at")
       .bind(u.id, now()).run();
   }
-  if (users.length) console.log("Stripe reconciliation", { checked: users.length, updated: changed });
+  await writeState(e, "stripe", { at: now(), checked: users.length, updated: changed, failed });
+  if (users.length) console.log("Stripe reconciliation", { checked: users.length, updated: changed, failed });
 }
 /** A Customer Portal link; with a plan it opens on the confirmation of that plan change. */
 async function portalUrl(e: Env, request: Request, customer: string, plan?: PaidPlanId | null) {
@@ -254,10 +285,11 @@ async function subscriptionStatements(e: Env, sub: Stripe.Subscription, userId: 
   ).bind(sub.id, userId, plan, unpaid ? "past_due" : sub.status, item.current_period_start, item.current_period_end, sub.cancel_at_period_end ? 1 : 0, fetchedAt), status];
 }
 /**
- * A full refund, a chargeback or the deletion of the account ends the paid plan at once: subscriptions are cancelled
- * in Stripe and the credits left in paid periods stop. Safe to repeat.
+ * A full refund, a chargeback, a withdrawal or the deletion of the account ends the paid plan at once: subscriptions
+ * are cancelled in Stripe (no further charges) and the posts and credits left in paid periods stop. A grant is not
+ * touched (its window ID has no Stripe subscription). Safe to repeat.
  */
-export async function endPaidAccess(e: Env, customer: string, reason: "refund" | "dispute" | "deletion") {
+export async function endPaidAccess(e: Env, customer: string, reason: "refund" | "dispute" | "withdrawal" | "deletion") {
   const s = stripe(e), fetchedAt = now();
   const user = await e.DB.prepare("SELECT id FROM users WHERE stripe_customer=?").bind(customer).first<{ id: string }>();
   const list = await s.subscriptions.list({ customer, status: "all", limit: 10 });
@@ -273,6 +305,48 @@ export async function endPaidAccess(e: Env, customer: string, reason: "refund" |
     statements.push(e.DB.prepare("UPDATE usage_windows SET quota=used,posts_quota=posts_used WHERE user_id=? AND id LIKE ?").bind(user.id, `${user.id}:sub_%`));
   if (statements.length) await e.DB.batch(statements);
   console.error("Paid access ended", { userId: user?.id ?? null, reason, cancelled });
+}
+/**
+ * Confirms the contract on a durable medium (CRD Art. 8(7)): the plan and price, the request for immediate start
+ * given at checkout, and how to withdraw. Sent once per completed checkout; retried by maintenance.
+ */
+export async function confirmContract(e: Env, sessionId: string) {
+  const row = await e.DB.prepare(
+    "SELECT c.plan,c.created_at,u.email FROM checkout_consents c JOIN users u ON u.id=c.user_id WHERE c.session_id=? AND c.completed_at IS NOT NULL AND c.confirmed_at IS NULL",
+  ).bind(sessionId).first<{ plan: string; created_at: number; email: string }>();
+  if (!row) return;
+  const plan = plans.find((p) => p.id === row.plan);
+  const site = (e.SITE_URL || "").replace(/\/$/, "");
+  const when = new Date(row.created_at * 1000).toUTCString();
+  const contact = e.CONTACT_EMAIL ? `by email to ${e.CONTACT_EMAIL} or ` : "";
+  await sendMail(e, row.email, `Your ${plan?.name ?? row.plan} plan — ${PRODUCT.name}`, [
+    "Hi,",
+    "",
+    `This confirms your subscription to the ${plan?.name ?? row.plan} plan${plan ? ` at $${plan.price} a month, plus any tax shown at checkout` : ""}. ` +
+      "It renews every month until you cancel it in Billing.",
+    "",
+    `When you ordered (${when}) you asked:`,
+    `"${IMMEDIATE_START_TEXT}"`,
+    "",
+    `Right of withdrawal: you can withdraw from this contract within ${WITHDRAWAL_DAYS} days of subscribing without giving a reason. ` +
+      `Tell us ${contact}through ${site}/contact?topic=withdrawal. You can use the model withdrawal form at ${site}/terms#withdrawal-form. ` +
+      `We refund within 14 days of your message what you paid, less the share of the plan you used.`,
+    "",
+    `Terms of Service: ${site}/terms`,
+    [e.COMPANY_NAME, e.COMPANY_ADDRESS].filter(Boolean).join(", "),
+  ].join("\n"));
+  await e.DB.prepare("UPDATE checkout_consents SET confirmed_at=? WHERE session_id=?").bind(now(), sessionId).run();
+}
+/** Hourly: confirmations whose email failed when the payment completed (up to a week back). */
+export async function confirmPendingContracts(e: Env) {
+  if (e.BILLING_ENABLED !== "true") return;
+  const rows = (await e.DB.prepare(
+    "SELECT session_id FROM checkout_consents WHERE confirmed_at IS NULL AND completed_at>? ORDER BY completed_at LIMIT 20",
+  ).bind(now() - 7 * DAY).all<{ session_id: string }>()).results;
+  for (const r of rows) {
+    try { await confirmContract(e, r.session_id); }
+    catch (error) { console.error("Contract confirmation failed", { session: r.session_id, error: (error as Error)?.name }); }
+  }
 }
 const customerId = (c: string | { id: string }) => (typeof c === "string" ? c : c.id);
 export async function webhook(request: Request, e: Env) {
@@ -300,6 +374,9 @@ export async function webhook(request: Request, e: Env) {
     const charge = await s.charges.retrieve(customerId(object.charge));
     if (charge.customer) await endPaidAccess(e, customerId(charge.customer), "dispute");
   }
+  const completedSession = event.type === "checkout.session.completed" && typeof object.id === "string" ? (object.id as string) : null;
+  if (completedSession)
+    statements.push(e.DB.prepare("UPDATE checkout_consents SET completed_at=? WHERE session_id=? AND completed_at IS NULL").bind(now(), completedSession));
   if (subscriptionId) {
     // Current state from Stripe: never grant access based on a redirect, a stale payload or an invoice alone.
     const fetchedAt = now();
@@ -316,6 +393,11 @@ export async function webhook(request: Request, e: Env) {
   }
   statements.push(e.DB.prepare("INSERT OR IGNORE INTO billing_events(id,created_at) VALUES (?,?)").bind(event.id, now()));
   await e.DB.batch(statements);
+  // After the batch, so a failed email never makes Stripe resend the event; maintenance retries it.
+  if (completedSession) {
+    try { await confirmContract(e, completedSession); }
+    catch (error) { console.error("Contract confirmation failed", { session: completedSession, error: (error as Error)?.name }); }
+  }
   return { received: true };
 }
 export { plans };

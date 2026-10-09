@@ -11,6 +11,8 @@ export type User = {
   id: string; name: string; email: string; verified: boolean; admin: boolean; onboarding: Onboarding;
   plan: PlanId; used: number; limit: number; postsUsed: number; postsLimit: number;
   trialEndsAt: number | null; trialEnded: boolean; periodEnd: number | null; hasSubscription: boolean; paymentIssue: boolean;
+  /** The plan is an administrator's free month (until periodEnd), not a paid subscription. */
+  granted?: boolean;
 };
 export type Workspace = {
   id: string; name: string; website: string | null; description: string | null; logoAssetId: string | null;
