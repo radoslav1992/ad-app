@@ -7,6 +7,7 @@ import { TextPreview, type PreviewBackground, type TextBlock } from "./TextPrevi
 import { CaptionStylePicker, EditorSection, TextAnimationPicker } from "./CaptionPickers";
 import { MediaPicker, LibraryPicker } from "./pickers";
 import { CreatorField } from "./creators";
+import { BrollPanel, BrollStrip, useBroll } from "./BrollPanel";
 import { Switch, useToast } from "../ui";
 import { formatIds, formats, recordingCurrent, specCredits, specSchema, HOOK_CLIP_MAX_SECONDS, type FormatId, type Spec, type Subtitles } from "../../shared/formats";
 import { hookPatterns, writingStyles, writingStyleIds, type WritingStyle } from "../../shared/hooks";
@@ -161,6 +162,8 @@ export function Create() {
   const ugcWords = spec?.format === "ugc" && recordingCurrent(spec) && spec.generated?.videoAssetId ? spec.generated.words : sample.words;
   const ugcStyle = spec?.format === "ugc" ? spec.captionStyle : null;
   const ugcCaptions = useMemo(() => (ugcStyle ? styledCaptions(ugcWords, ugcStyle) : null), [ugcWords, ugcStyle]);
+  // AI B-roll: where the picture cuts away to shots, on the recording's clock.
+  const broll = useBroll(spec, existing?.duration);
   const picked = (id: string | undefined) => (id ? media[id] : undefined);
   // The own clip whose speech can become subtitles: the demo, or a wall of text's video background.
   const speechId = spec?.format === "hook_demo" ? spec.demo.assetId : spec?.format === "text" && picked(spec.background.assetId)?.kind === "video" ? spec.background.assetId : undefined;
@@ -232,7 +235,7 @@ export function Create() {
     // AI UGC: the made recording with its real word timings, or the creator's picture with a sample of the script.
     if (recordingCurrent(spec) && spec.generated?.videoAssetId && spec.generated.words.length) {
       return <TextPreview blocks={[block(spec.hook, look, 3)]} seconds={existing?.duration || 600} videoClock sound replay={replay}
-        background={{ url: fileUrl(spec.generated.videoAssetId), kind: "video" }} captions={ugcCaptions} />;
+        background={{ url: fileUrl(spec.generated.videoAssetId), kind: "video" }} captions={ugcCaptions} cutaways={broll.cutaways} />;
     }
     const character = characters.find((c) => c.id === spec.characterId);
     return <TextPreview blocks={[block(spec.hook, look, Math.min(3, sample.seconds))]} seconds={sample.seconds} replay={replay}
@@ -359,6 +362,7 @@ export function Create() {
                       <button className="btn icon sm" disabled={slide >= spec.slides.length - 1} onClick={() => setSlide(slide + 1)} aria-label="Next slide"><ChevronRight size={16} /></button>
                     </div>
                   )}
+                  {spec.format === "ugc" && <BrollStrip spec={spec} state={broll} />}
                   {spec.format === "hook_demo" && (
                     <div className="seg small-seg preview-parts" role="group" aria-label="Part to preview">
                       <button type="button" aria-pressed={part === "hook"} onClick={() => setPart("hook")}>Hook</button>
@@ -369,6 +373,10 @@ export function Create() {
                 <Inspector spec={spec} look={look} setLook={setLook} slide={slide} setSlide={setSlide} onChange={change}
                   pick={(p) => setPicker(p)} aiPrompts={aiPrompts} addCharacter={(c) => setCharacters((l) => [c, ...l.filter((x) => x.id !== c.id)])} demoSeconds={picked(spec.format === "hook_demo" ? spec.demo.assetId : undefined)?.duration} />
               </div>
+              {spec.format === "ugc" && (
+                <BrollPanel spec={spec} workspaceId={workspace.id} postId={existing?.id} state={broll} onChange={(b) => change({ broll: b } as Partial<Spec>)}
+                  premium={!!characters.find((c) => c.id === spec.characterId)?.premium} />
+              )}
               {spec.format === "ugc" && (
                 <EditorSection title="Captions" hint="Word-by-word captions of what your creator says. The preview plays a sample until the voice is recorded.">
                   <CaptionStylePicker value={spec.captionStyle} onChange={(captionStyle) => change({ captionStyle } as Partial<Spec>)} />

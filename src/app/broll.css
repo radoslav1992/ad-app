@@ -1,0 +1,36 @@
+/* AI B-roll in the editor: the strip under the preview, the shot list and the planned shots. */
+.broll-strip { margin-top: 12px; }
+.broll-track { position: relative; height: 22px; border-radius: 8px; background: #e3e6ec; overflow: hidden; }
+.broll-cut { position: absolute; top: 0; bottom: 0; background: var(--violet); color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; border-left: 2px solid var(--brand); min-width: 4px; }
+.broll-legend { display: flex; justify-content: space-between; gap: 8px; margin-top: 5px; font-size: 11.5px; color: var(--muted); }
+.broll-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; vertical-align: -1px; margin: 0 2px 0 6px; }
+.broll-legend i.creator { background: #e3e6ec; border: 1px solid var(--line-2); }
+.broll-legend i.cut { background: var(--violet); }
+
+.broll-shots { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.broll-shot { border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 8px; background: #fff; }
+.broll-shot.off { background: var(--surface-2); }
+.broll-shot.off .broll-check span { color: var(--muted); }
+.broll-shot .textarea { min-height: 0; padding: 9px 12px; font-size: 14px; }
+.broll-check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; line-height: 1.4; cursor: pointer; }
+.broll-check input { margin-top: 3px; width: 16px; height: 16px; flex: none; accent-color: var(--navy); }
+.broll-warn { margin: 0; color: #8a5300; }
+.broll-sources { grid-auto-columns: minmax(0, 1fr); }
+.broll-sources button { flex-wrap: wrap; row-gap: 0; }
+.broll-sources small { width: 100%; text-align: center; font-weight: 500; opacity: 0.75; font-size: 11.5px; }
+.broll-own { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.broll-own .truncate { flex: 1 1 120px; max-width: none; }
+.broll-thumb { width: 36px; height: 64px; border-radius: 7px; object-fit: cover; flex: none; background: #1e2433; display: block; }
+.broll-thumb.empty { display: grid; place-items: center; color: #c9ced8; }
+.broll-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+
+.broll-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.broll-list.off .broll-thumb { opacity: 0.45; }
+.broll-list li { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 12px; padding: 8px; background: #fff; min-width: 0; }
+.broll-list li > div { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; min-width: 0; }
+.broll-list p { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 560px) {
+  .broll-sources { grid-auto-flow: row; grid-template-columns: 1fr; }
+  .broll-sources button { justify-content: flex-start; flex-wrap: nowrap; }
+  .broll-sources small { width: auto; margin-left: auto; text-align: right; }
+}

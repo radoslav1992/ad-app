@@ -17,6 +17,7 @@ import { settings } from "./routes/settings";
 import { admin } from "./routes/admin";
 import { workspaces } from "./workspaces";
 import { posts } from "./posts";
+import { broll } from "./broll";
 import { media, uploadInputs } from "./media";
 import { renderInputs } from "./content-workflow";
 import { characters, studio } from "./characters";
@@ -115,6 +116,7 @@ app.use("/api/*", async (c, next) => {
 app.route("/api/billing", billing);
 app.route("/api/workspaces", workspaces);
 app.route("/api/posts", posts);
+app.route("/api/broll", broll);
 app.route("/api/media", media);
 app.route("/api/characters", characters);
 app.route("/api/studio", studio);

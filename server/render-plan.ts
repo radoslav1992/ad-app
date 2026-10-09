@@ -3,6 +3,7 @@ import { styledCaptions, type CaptionDocument, type CaptionWord } from "../share
 import { overlayItems, revealSeconds, type TextLook } from "../shared/overlay";
 import { motionFor } from "../shared/layers";
 import { clipWords } from "../shared/speech";
+import { cutawaySegments, placeShots } from "../shared/broll";
 import { FRAME, type ComposePayload, type ComposeSegment, type StillsPayload } from "../shared/render";
 import { HOOK_CLIP_MAX_SECONDS, type Spec, type Subtitles } from "../shared/formats";
 
@@ -17,8 +18,8 @@ export type Media = { key: string; kind: "image" | "video" | "audio"; duration: 
 export type PlanContext = {
   /** Media by asset ID or library ID. */
   media: Record<string, Media>;
-  /** The talking recording's video (and word timings) for UGC and talking hooks. */
-  avatar?: { key: string; duration: number; words: { text: string; start: number; end: number }[] };
+  /** The talking recording's video (and word timings) for UGC and talking hooks; `voice`: its sound on its own (B-roll). */
+  avatar?: { key: string; duration: number; words: { text: string; start: number; end: number }[]; voice?: string };
   accent: string;
   watermark: string;
 };
@@ -98,7 +99,7 @@ const total = (segments: ComposeSegment[]) => round(segments.reduce((n, s) => n 
 export function planRender(spec: Spec, ctx: PlanContext): Plan {
   const inputs = new Inputs();
   let segments: ComposeSegment[] = [], ass = emptyAss(W, H), duck: [number, number][] = [], overlay: ComposePayload["overlay"] = null;
-  let stills: Plan["stills"] = null, synthetic = false, coverAt = 0.6;
+  let stills: Plan["stills"] = null, synthetic = false, coverAt = 0.6, voice: ComposePayload["voice"] = null;
   switch (spec.format) {
     case "slideshow": {
       const s = spec.secondsPerSlide;
@@ -165,8 +166,19 @@ export function planRender(spec: Spec, ctx: PlanContext): Plan {
     }
     case "ugc": {
       if (!ctx.avatar) throw new Error("MEDIA_INPUT");
-      const d = round(ctx.avatar.duration);
-      segments = [{ kind: "video", input: inputs.add(ctx.avatar.key), trim: 0, duration: d, audio: 1 }];
+      const d = round(ctx.avatar.duration), creator = inputs.add(ctx.avatar.key), broll = spec.broll;
+      // AI B-roll: the picture cuts away to a shot during each chosen sentence while the voice plays on as its own
+      // track (the creator's video is silent then); images move slowly, clips play from their start.
+      const cuts = broll?.enabled && ctx.avatar.voice ? placeShots(broll.shots, spec.script, ctx.avatar.words, d, (i) => !!(broll.shots[i].assetId || broll.shots[i].libraryId)).cuts : [];
+      segments = cuts.length
+        ? cutawaySegments(cuts, d, creator, (cut, n) => {
+          const shot = broll!.shots[cut.shot], m = need(ctx, shot.assetId || shot.libraryId), length = round(cut.end - cut.start);
+          if (m.kind === "image") return { kind: "image", input: inputs.add(m.key), duration: length, motion: motionFor(n) };
+          if (m.kind === "video") return { kind: "video", input: inputs.add(m.key), trim: 0, duration: length, audio: 0 };
+          throw new Error("MEDIA_INPUT");
+        })
+        : [{ kind: "video", input: creator, trim: 0, duration: d, audio: 1 }];
+      if (cuts.length) voice = { input: inputs.add(ctx.avatar.voice!), start: 0, volume: 1 };
       ass = ctx.avatar.words.length ? captionAss(styledCaptions(ctx.avatar.words, spec.captionStyle)) : ass;
       ass = text(ass, spec.hook, spec.hookLook, 0, Math.min(3, d));
       duck = [[0, d]];
@@ -183,7 +195,7 @@ export function planRender(spec: Spec, ctx: PlanContext): Plan {
   if (stills) stills.synthetic = stills.synthetic || ai(stills.keys);
   return {
     compose: {
-      operation: "compose", width: W, height: H, segments, voice: null, music: music(ctx, inputs, spec, duck), overlay,
+      operation: "compose", width: W, height: H, segments, voice, music: music(ctx, inputs, spec, duck), overlay,
       ass: withMark(ass, ctx), coverAt: Math.min(coverAt, Math.max(0, length - 0.1)), synthetic, keys: inputs.keys,
     },
     stills,

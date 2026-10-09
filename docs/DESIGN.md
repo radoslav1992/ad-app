@@ -67,3 +67,8 @@ opens Blitz and starts the first batch of posts as soon as the brand analysis is
   grid, or "Find speech" for an upload not yet listened to. Animation choices are small live tiles too. Every grid
   is a radio group (arrow keys move the choice); the chosen tile turns ink with a lime underline. With reduced motion
   the samples and the preview show a still moment.
+  **B-roll** for AI UGC (above Captions): *Plan B-roll* (free) lists the chosen sentences with their times, an
+  editable shot description, the source per shot (AI image / AI clip / My media, with prices) and the total; only
+  *Add B-roll* spends credits (a saved post is saved and made again at once). Once added: a switch to show it, the
+  shots with their state (made, made when you save, not shown and why) and *Edit shots*. A strip under the preview
+  marks the cut-aways on the video's clock, and the preview plays the shots at those times.

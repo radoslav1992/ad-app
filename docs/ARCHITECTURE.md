@@ -52,6 +52,19 @@ word-by-word reveal are over within 0.6 s; that one is paced to the text and don
 drawn without animation and the cover is taken once the first text is fully shown. AI UGC captions use one of the
 twenty caption styles (`captionStyle`); the writer picks one per post and never repeats one within a batch.
 
+**AI B-roll** (AI UGC; `shared/broll.ts`, `server/broll.ts`, ported from rech-bg's "B-roll с AI"). `POST /api/broll/plan`
+is free (the text model only, 30 an hour): the model gets the script's sentences as data (never the first or the last,
+and on a recording's clock only those with room) and picks 2–4 by ID, with a shot description each and one visual style
+from the brand profile. Picks are checked: known sentences, spaced, at most 40% of the video. The spec stores each
+shot's sentence by its words, a description and a source (AI image 1 credit, AI clip 6, own upload or library clip
+free), never a time: cut-aways are placed from the recording's word timings at render (`placeShots`): from the
+sentence's first word for 3–5 s, on the frame grid, the hook and the closing sentence stay on the creator. AI shots
+still to make are ordinary pending media of the post's run (`pendingMedia`, claim before call, refunded on failure);
+made ones stay referenced, so switching B-roll off or on re-renders without charging and the save step keeps them. The
+render cuts the silent creator video (resumed at its own time after each shot) with the shots and plays the recorded
+voice WAV as the separate `voice` track throughout. The writer may add 2–3 AI image shots to new AI UGC posts when the
+workspace spends AI credits.
+
 **Speech in uploads.** After an uploaded video or track is checked, one with sound and at most 10 minutes long is
 transcribed (`server/speech.ts`): the renderer's `audio` operation cuts its sound into mono 16 kHz MP3 parts of
 120 s, and Workers AI `@cf/openai/whisper-large-v3-turbo` hears each part (base64 `audio`, `vad_filter`); the words
