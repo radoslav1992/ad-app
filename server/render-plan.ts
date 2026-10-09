@@ -8,7 +8,8 @@ import { FPS, storySegments, storyTiming, type StoryScene } from "../shared/stor
 import { cutWords, keptDuration, windowCuts, type KeepRange } from "../shared/cuts";
 import { trackWindow } from "../shared/track";
 import { FRAME, type ComposePayload, type ComposeSegment, type StillsPayload } from "../shared/render";
-import { CLIP_TITLE_SECONDS, HOOK_CLIP_MAX_SECONDS, trackKey, type Cuts, type Spec, type Subtitles } from "../shared/formats";
+import { CLIP_TITLE_SECONDS, HOOK_CLIP_MAX_SECONDS, trackKey, type CarouselSpec, type Cuts, type Spec, type Subtitles } from "../shared/formats";
+import { carouselFrames, carouselSlide, type Box } from "../shared/carousel";
 
 // A post's spec → renderer payloads. Pure: every referenced file is resolved beforehand (R2 key, length, sound) and
 // inputs are R2 keys here; the workflow turns them into capability links. Times are seconds on the output clock.
@@ -17,7 +18,7 @@ import { CLIP_TITLE_SECONDS, HOOK_CLIP_MAX_SECONDS, trackKey, type Cuts, type Sp
  * A resolved file: its R2 key, what it is, its length, a green-screen colour, whether it is AI-made, and the words
  * spoken in it (an upload's transcript, on its own clock).
  */
-export type Media = { key: string; kind: "image" | "video" | "audio"; duration: number; chroma?: string; ai?: boolean; words?: CaptionWord[] };
+export type Media = { key: string; kind: "image" | "video" | "audio"; duration: number; chroma?: string; ai?: boolean; words?: CaptionWord[]; width?: number; height?: number };
 export type PlanContext = {
   /** Media by asset ID or library ID. */
   media: Record<string, Media>;
@@ -28,7 +29,8 @@ export type PlanContext = {
   accent: string;
   watermark: string;
 };
-export type Plan = { compose: Omit<ComposePayload, "id" | "urls"> & { keys: string[] }; stills: (Omit<StillsPayload, "id" | "urls"> & { keys: string[] }) | null };
+export type StillsPlan = Omit<StillsPayload, "id" | "urls"> & { keys: string[] };
+export type Plan = { compose: Omit<ComposePayload, "id" | "urls"> & { keys: string[] }; stills: StillsPlan | null };
 
 const { width: W, height: H } = FRAME;
 const MAX_SECONDS = 180;
@@ -111,10 +113,10 @@ function subtitles(ass: string, settings: Subtitles, media: Media, input: number
   return words.length ? withCaptions(ass, styledCaptions(words, settings.style, position)) : ass;
 }
 function music(ctx: PlanContext, inputs: Inputs, spec: Spec, duck: [number, number][]) {
-  const id = spec.music?.trackId || spec.music?.assetId;
-  if (!id) return null;
+  const track = "music" in spec ? spec.music : null, id = track?.trackId || track?.assetId;
+  if (!track || !id) return null;
   const m = need(ctx, id);
-  return { input: inputs.add(m.key), volume: spec.music!.volume, duck };
+  return { input: inputs.add(m.key), volume: track.volume, duck };
 }
 /** The output's length: the segments less the overlaps of their transitions. */
 const total = (segments: ComposeSegment[]) => round(segments.reduce((n, s) => n + s.duration - (s.transition?.duration ?? 0), 0));
@@ -138,6 +140,8 @@ export function planRender(spec: Spec, ctx: PlanContext): Plan {
   let segments: ComposeSegment[] = [], ass = emptyAss(W, H), duck: [number, number][] = [], overlay: ComposePayload["overlay"] = null;
   let stills: Plan["stills"] = null, synthetic = false, coverAt = 0.6, voice: ComposePayload["voice"] = null;
   switch (spec.format) {
+    // Pictures only: planned by planCarousel.
+    case "carousel": throw new Error("MEDIA_INPUT");
     case "slideshow": {
       const s = spec.secondsPerSlide;
       spec.slides.forEach((slide, i) => {
@@ -282,3 +286,30 @@ export function planRender(spec: Spec, ctx: PlanContext): Plan {
   };
 }
 const withMark = (ass: string, ctx: PlanContext) => (ctx.watermark ? withWatermark(ass, ctx.watermark, W, H) : ass);
+
+const whole = (b: Box) => ({ x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.w), h: Math.round(b.h) });
+/**
+ * A carousel: one JPEG per slide at its aspect, and no video. Each is its page colour, its picture cover-cropped into
+ * the layout's box, the words burned in, then the logo (shared/carousel.ts lays it out, as the editor's preview does).
+ * The handle in the footer stands in for the corner watermark of videos.
+ */
+export function planCarousel(spec: CarouselSpec, ctx: PlanContext): StillsPlan {
+  const { width, height } = carouselFrames[spec.aspect];
+  const inputs = new Inputs();
+  const logo = spec.brand.logoId ? need(ctx, spec.brand.logoId) : null;
+  const logoAspect = logo?.kind === "image" && logo.width && logo.height ? logo.width / logo.height : null;
+  const slides = spec.slides.map((slide, i) => {
+    const m = slide.image?.assetId ? need(ctx, slide.image.assetId) : null;
+    const picture = m?.kind === "image" ? m : null;
+    const layout = carouselSlide(spec, i, { picture: !!picture, logo: logoAspect });
+    return {
+      color: layout.background,
+      ...(picture && layout.picture && { input: inputs.add(picture.key), box: { ...whole(layout.picture), radius: Math.round(layout.picture.radius) } }),
+      ...(logo && layout.logo && { logo: { input: inputs.add(logo.key), ...whole(layout.logo) } }),
+      ass: withItems(emptyAss(width, height), layout.items, 0, 10),
+    };
+  });
+  // Marked as AI-made when an AI picture is in it.
+  const synthetic = Object.values(ctx.media).some((m) => m.ai && inputs.keys.includes(m.key));
+  return { operation: "stills", width, height, slides, synthetic, keys: inputs.keys };
+}

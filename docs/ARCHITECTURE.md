@@ -4,7 +4,8 @@
 
 React 19 + React Router + Vite (client, `src/`), a Hono Worker (`server/`), Cloudflare D1 (the schema in
 `migrations/`: `0001_initial.sql`, then additive migrations `0002_analytics.sql`, `0003_creator_looks.sql` and
-`0004_operations.sql`, and `0005_clips.sql`, which rebuilds `posts` and `runs` for clips and paid speech; see below), a
+`0004_operations.sql`, `0005_clips.sql`, which rebuilds `posts` and `runs` for clips and paid speech, and
+`0006_carousels.sql`, which rebuilds `posts` without a format list and adds Instagram saves; see below), a
 private R2 bucket (`MEDIA`), three Workflows, a Containers pool of three FFmpeg renderers (`renderer/server.py`, with
 OpenCV for face tracking) and the Workers AI binding for text. Contracts shared by the client and server live
 in `shared/` (formats/specs, plans and credits, captions and on-screen text layout, schedule, renderer payloads).
@@ -42,7 +43,8 @@ in `shared/` (formats/specs, plans and credits, captions and on-screen text layo
    - **Render:** `server/render-plan.ts` turns the spec into a renderer payload of segments, music with ducking, an
      optional green-screen overlay, transitions between segments (narrated videos), and ASS captions/text from
      `shared/overlay.ts` + `shared/caption-scene.ts`. The
-     container renders the MP4 and a cover; slideshows also get JPEG slides.
+     container renders the MP4 and a cover; slideshows also get JPEG slides. A carousel is only its JPEG slides
+     (`planCarousel`, renderer op `stills`; no video), the first one being the cover.
    - **Save:** files from earlier versions of the post are deleted.
 4. **Review.** Blitz lists ready, pending posts. Approving can auto-schedule (`autoSchedule` in
    `server/publishing.ts`).
@@ -102,6 +104,37 @@ the whole plan lives in the post's spec (no migration: `posts.format` allows `st
   white with a thick black outline, one key word per caption group in lime (the scene's `keys`, chosen by the writer
   or the owner, else the longest word that is not a little one). No subtitles without real word timings.
 
+**Carousels** (format `carousel`; `shared/carousel.ts`). Designed, text-led picture posts for Instagram (also TikTok
+photo posts and LinkedIn multi-image posts): 2–10 slides at 4:5 (1080×1350, the default: it uses the most of the feed)
+or 1:1 (1080×1080). The formula: a cover with a bold hook, over a full-bleed picture by default (`cover: "image"`),
+one point per slide, and a call to action last (`cta`: comment a keyword, link in bio, save and share, or follow; the
+caption ends with the same line, `captionWithCta`).
+- **One layout for the render and the editor.** `carouselSlide(spec, i)` turns a slide into a page colour, an optional
+  picture box (full-bleed under a black shade, or a rounded box under the words), an optional logo box and caption
+  items (`shared/caption-scene.ts`: bars, pills, numbers, words, the footer with the handle, "3/7" or a "Swipe" cue).
+  Words are measured with the bundled fonts' metrics (`shared/caption-fonts.ts`): titles shrink until they fit their
+  part of the slide and keep to a few lines, the body shrinks more slowly, and a word wider than a line breaks between
+  letters, so nothing overflows (tested over every theme, shape and kind with extreme words). The render burns the
+  items in with libass (`withItems`) and the editor draws them on a canvas (`src/app/carousel-canvas.tsx`), in the
+  same order: page, picture, words, logo.
+- **Themes and colours.** Six themes (Clean, Bold, Dark, Notebook, Photo, Quote). Colours come from the post's brand
+  kit (`brand`: handle, logo, page colour, brand colours, heading and text fonts from the three bundled faces, an
+  optional character reference), copied from the workspace's saved kit or its profile when the post is made, so a
+  later change never alters a made post's look or price. Every text colour is checked against what it sits on (WCAG:
+  4.5:1 for words, 3:1 for accents) and falls back to ink or white; a Bold page that neither reads on is darkened.
+  Over a picture the words are white on two black shades, which keep 4.5:1 even on a white picture.
+- **Pictures.** An owner's image (upload, website or AI image) or an AI image at the slide's shape (`nano-banana-2`,
+  `aspect_ratio` 4:5 or 1:1, 1 credit). With a character reference in the kit, every AI picture of the post is made
+  by `fal-ai/nano-banana-pro/edit` with the reference's capability link in `image_urls` (rech-bg's request shape:
+  `prompt`, `system_prompt`, `num_images`, `aspect_ratio`, `resolution: "1K"`, `output_format`, `limit_generations`),
+  for 2 credits each. Both are pending media of the post's run: claim before call, refunded with the run.
+- **Renderer.** `stills` takes 1080×1350 and 1080×1080 frames; a slide with a `box` is its page colour with the
+  picture cover-cropped into the box (corners cleared with `geq`, anti-aliased as the browser's rounded clip), the ASS
+  burned in, then the `logo` fitted in its box. Payloads without `box`/`logo` render exactly as before. The handle
+  in the footer stands in for the corner watermark of videos.
+- **Downloads.** Every slide, and `GET /api/posts/:id/pdf`: one PDF with a page per slide, the JPEGs embedded as they
+  are (`shared/pdf.ts`, no dependency), for LinkedIn document posts.
+
 **Speech in uploads** (ported from rech-bg). An uploaded video or track is transcribed by ElevenLabs Scribe v2
 (`server/speech.ts`: `POST /v1/speech-to-text`, `model_id=scribe_v2`, `timestamps_granularity=word`, no
 `language_code`, so the language is detected and kept). Scribe reads the file itself from a capability link
@@ -137,12 +170,14 @@ in the moment (OpenCV YuNet at 4 samples a second, hard cuts from FFmpeg's scene
 keyframes. It is kept with the post (`spec.tracked`, server-owned, for that moment), and the render crops the wide
 video to 9:16 around it; no face, a video no wider than 9:16, or a failure leaves the picture centred.
 
-**Migration 0005.** D1 always enforces foreign keys and runs a migration in one transaction, and `DROP TABLE`
+**Migrations 0005 and 0006.** D1 always enforces foreign keys and runs a migration in one transaction, and `DROP TABLE`
 deletes every row first, which would cascade to `runs`, `media_assets` and `publications` (and queue their files for
 deletion) even with `defer_foreign_keys`. So `posts` and `runs` are copied aside, their keys are moved (`'~'||id`) so
 no child row matches, the tables are dropped and recreated, and the copies are put back under the original keys,
 which resolves the deferred violations before the commit. Indexes and triggers are recreated word for word
-(`tests/shorts.test.ts` proves it with rows in every child table).
+(`tests/shorts.test.ts` proves it with rows in every child table). 0006 rebuilds `posts` the same way without the
+CHECK list on `format`: every write validates the spec with zod (`specSchema`), so later formats need no rebuild
+(`tests/carousel.test.ts`). It also adds `publications.saves`.
 
 Paid provider calls are made once. A claim is stored in `runs.provider` before the call and the ticket right after,
 so a retried step polls instead of paying again. A claim without a ticket fails the run; the exception is HeyGen,
@@ -165,7 +200,7 @@ AES-GCM-encrypted with `TOKEN_ENCRYPTION_KEY`. See `docs/SOCIAL.md`.
 ## Analytics
 
 - **Post stats.** Every 5 minutes the cron reads a bounded batch of published posts' lifetime views, likes, comments
-  and shares from the networks (`server/metrics.ts`, `stats()` in each network client): new posts every 3 hours for two
+  and shares (and saves, on Instagram) from the networks (`server/metrics.ts`, `stats()` in each network client): new posts every 3 hours for two
   days, then daily, for 30 days. They are stored on `publications` (`views` … `metrics_at`, `metrics_error`). A
   number a network doesn't report stays NULL and shows as "–"; LinkedIn shares none.
 - **Tracked links.** `/go/<code>` redirects to the workspace's own target URL with UTM tags and `hs=<code>`, and counts
@@ -175,7 +210,8 @@ AES-GCM-encrypted with `TOKEN_ENCRYPTION_KEY`. See `docs/SOCIAL.md`.
   localStorage and reports sales to `POST /api/t/<site key>` (also callable from their server). Sales are credited to
   the post and network of that link (`conversions`); unmatched ones count as "not from a tracked link".
 - **The page.** `GET /api/workspaces/:id/analytics?days=7|30` adds the stored numbers up (totals, per network, per
-  post, per day; money per currency, never converted). Details and limits: `docs/SOCIAL.md`.
+  post, per day; money per currency, never converted). Top posts show the share rate and save rate per view, marked
+  at creators' rules of thumb (7% saves, 4% shares; `RATE_HINTS`), labelled as signs, not promises. Details and limits: `docs/SOCIAL.md`.
 
 ## Accounts, plans and credits
 
@@ -206,7 +242,7 @@ Auth, sessions, rate limits and Stripe come from rech-bg. Each paid period is a 
   `default-src 'none'` policy, and a link can only lead to its workspace's checked address.
 - **AI marking:** AI-made media is marked in its MP4/JPEG metadata (IPTC digital source type). The saved render also
   carries `{"ai":true}` in `media_assets.meta`, which sets the networks' AI labels on publishing (TikTok `is_aigc`,
-  YouTube `containsSyntheticMedia`).
+  YouTube `containsSyntheticMedia`). Carousel slides with an AI picture are marked the same way (JPEG XMP).
 - **Deletion:** deleting posts, files, creators or accounts queues R2 cleanup. Work in progress is protected by
   triggers.
 - **Retention:** `server/retention.ts` runs hourly and clears what has expired: run prompts and provider state after

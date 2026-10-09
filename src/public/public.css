@@ -171,6 +171,17 @@
 .fmt-slideshow .dots i { flex: 1; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, 0.4); }
 .fmt-slideshow .dots i:first-child { background: #fff; }
 .fmt-slideshow b { font-size: 21px; line-height: 1.1; padding: 0 12px; text-shadow: 0 2px 0 #000, 0 -1px 0 #000, 2px 0 0 #000, -2px 0 0 #000; }
+/* Carousel: a designed 4:5 slide in a brand colour, a big number, one point, the dots of the slides under it. */
+.fmt-carousel { background: linear-gradient(160deg, #f26b1d, #9a3a0a); }
+.fmt-carousel .page { position: absolute; inset: 14% 12% 20%; background: #fff; border-radius: 10px; padding: 12px; color: #111418; text-align: left; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25); }
+.fmt-carousel .page b { font-size: 28px; line-height: 1; color: #c2410c; }
+.fmt-carousel .page span { font-size: 14px; font-weight: 800; line-height: 1.15; }
+.fmt-carousel .page i { height: 6px; border-radius: 3px; background: #d3d8e0; }
+.fmt-carousel .page i + i { width: 70%; }
+.fmt-carousel .page small { margin-top: auto; font-family: var(--font); font-size: 9px; color: #62666e; }
+.fmt-carousel .dots { position: absolute; bottom: 9%; left: 0; right: 0; display: flex; justify-content: center; gap: 4px; }
+.fmt-carousel .dots i { width: 6px; height: 6px; border-radius: 50%; background: rgba(255, 255, 255, 0.5); }
+.fmt-carousel .dots i:nth-child(2) { background: #fff; }
 .fmt-text { background: linear-gradient(180deg, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.55)), linear-gradient(135deg, #1f3a5f, #0d1726 60%, #2b1f48); }
 .fmt-text p { font-family: var(--font); font-weight: 700; font-size: 13px; line-height: 1.35; padding: 0 14px; text-align: left; }
 .fmt-hook_demo { background: #10131b; grid-template-rows: 1fr 1fr; place-items: stretch; }

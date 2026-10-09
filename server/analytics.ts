@@ -17,8 +17,8 @@ import {
 
 export const analytics = new Hono<App>();
 
-type Acc = { views: number | null; likes: number | null; comments: number | null; shares: number | null; clicks: number; conversions: number; revenue: Map<string, number> };
-const blank = (): Acc => ({ views: null, likes: null, comments: null, shares: null, clicks: 0, conversions: 0, revenue: new Map() });
+type Acc = { views: number | null; likes: number | null; comments: number | null; shares: number | null; saves: number | null; clicks: number; conversions: number; revenue: Map<string, number> };
+const blank = (): Acc => ({ views: null, likes: null, comments: null, shares: null, saves: null, clicks: 0, conversions: 0, revenue: new Map() });
 const plus = (a: number | null, b: number | null) => (b === null || b === undefined ? a : (a ?? 0) + Number(b));
 /** Hundredths per currency → amounts, largest first. */
 const money = (m: Map<string, number>): Money[] =>
@@ -28,7 +28,7 @@ const engagement = (a: { likes: number | null; comments: number | null; shares: 
 /** Most views first; posts without view counts (LinkedIn, Instagram without insights) by their engagement. */
 const byReach = (a: Pick<Acc, "views" | "likes" | "comments" | "shares">, b: Pick<Acc, "views" | "likes" | "comments" | "shares">) =>
   (b.views ?? -1) - (a.views ?? -1) || engagement(b) - engagement(a);
-const counts = (a: Acc): Counts => ({ views: a.views, likes: a.likes, comments: a.comments, shares: a.shares, clicks: a.clicks, conversions: a.conversions, revenue: money(a.revenue) });
+const counts = (a: Acc): Counts => ({ views: a.views, likes: a.likes, comments: a.comments, shares: a.shares, saves: a.saves, clicks: a.clicks, conversions: a.conversions, revenue: money(a.revenue) });
 const addSales = (a: Acc, n: number, currency: string | null, amount: number) => {
   a.conversions += n;
   if (currency && amount) a.revenue.set(currency, (a.revenue.get(currency) || 0) + amount);
@@ -36,7 +36,7 @@ const addSales = (a: Acc, n: number, currency: string | null, amount: number) =>
 
 type PubRow = {
   post_id: string; platform: string; url: string | null; published_at: number;
-  views: number | null; likes: number | null; comments: number | null; shares: number | null; metrics_at: number | null; metrics_error: string | null;
+  views: number | null; likes: number | null; comments: number | null; shares: number | null; saves: number | null; metrics_at: number | null; metrics_error: string | null;
 };
 
 /** Notes for a network: why some numbers are missing and what to do about it. */
@@ -47,7 +47,7 @@ function notes(platform: PlatformId, pubs: PubRow[], accountExpired: boolean, t:
   if (platform === "linkedin") out.push({ tone: "info", text: "LinkedIn doesn't share post stats with apps like this one, so only clicks and sales show here." });
   if (accountExpired || has("reconnect")) out.push({ tone: "warn", text: `Reconnect your ${name} account to keep its stats up to date.`, action: "reconnect" });
   else if (has("scope"))
-    out.push({ tone: "warn", text: platform === "instagram" ? "Reconnect Instagram to allow views and shares." : `Reconnect ${name} to allow post stats.`, action: "reconnect" });
+    out.push({ tone: "warn", text: platform === "instagram" ? "Reconnect Instagram to allow views, shares and saves." : `Reconnect ${name} to allow post stats.`, action: "reconnect" });
   if (has("not_found"))
     out.push({ tone: "info", text: platform === "tiktok" ? "TikTok shares stats for public posts only." : `Some posts are no longer on ${name}.` });
   if (platform !== "linkedin" && pubs.some((p) => p.metrics_at === null && !p.metrics_error && p.published_at > t - DAY))
@@ -60,7 +60,7 @@ export async function workspaceAnalytics(env: Env, workspaceId: string, userId: 
   const firstDay = dayOf(t) - days + 1, since = firstDay * DAY;
   const [pubs, clicks, sales, accounts] = await Promise.all([
     env.DB.prepare(
-      "SELECT post_id,platform,url,published_at,views,likes,comments,shares,metrics_at,metrics_error FROM publications WHERE workspace_id=? AND user_id=? AND status='published' AND published_at>=? ORDER BY published_at DESC LIMIT 3000",
+      "SELECT post_id,platform,url,published_at,views,likes,comments,shares,saves,metrics_at,metrics_error FROM publications WHERE workspace_id=? AND user_id=? AND status='published' AND published_at>=? ORDER BY published_at DESC LIMIT 3000",
     ).bind(workspaceId, userId, since).all<PubRow>(),
     env.DB.prepare(
       "SELECT l.post_id,l.platform,k.day,SUM(k.clicks) AS clicks FROM link_clicks k JOIN tracked_links l ON l.code=k.code WHERE l.workspace_id=? AND k.day>=? GROUP BY l.post_id,l.platform,k.day",
@@ -87,7 +87,7 @@ export async function workspaceAnalytics(env: Env, workspaceId: string, userId: 
   const daily = new Map<number, { clicks: number; conversions: number }>();
   for (let d = firstDay; d <= dayOf(t); d++) daily.set(d, { clicks: 0, conversions: 0 });
   const addStats = (a: Acc, p: PubRow) => {
-    a.views = plus(a.views, p.views); a.likes = plus(a.likes, p.likes); a.comments = plus(a.comments, p.comments); a.shares = plus(a.shares, p.shares);
+    a.views = plus(a.views, p.views); a.likes = plus(a.likes, p.likes); a.comments = plus(a.comments, p.comments); a.shares = plus(a.shares, p.shares); a.saves = plus(a.saves, p.saves);
   };
 
   let withStats = 0, lastUpdated: number | null = null;

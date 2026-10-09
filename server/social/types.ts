@@ -72,7 +72,7 @@ export type FailureCode =
  * Lifetime counts of one published post, as the network reports them; null when it doesn't share that number.
  * `limited`: some counts need a permission the connection lacks (the person reconnects to allow them).
  */
-export type PostStats = { views: number | null; likes: number | null; comments: number | null; shares: number | null; limited?: boolean };
+export type PostStats = { views: number | null; likes: number | null; comments: number | null; shares: number | null; /** Instagram only. */ saves?: number | null; limited?: boolean };
 
 export interface Platform {
   id: PlatformId;

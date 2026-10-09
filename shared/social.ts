@@ -10,5 +10,14 @@ export const platforms: Record<PlatformId, {
   linkedin: { name: "LinkedIn", color: "#0a66c2", captionMax: 3000, video: { min: 3, max: 1800 }, photos: { max: 20 }, note: "Video and multi-image posts on your profile." },
 };
 export const isPlatform = (p: string): p is PlatformId => (platformIds as readonly string[]).includes(p);
-/** How a post goes out on a network: slideshows post as photos where the network has them, otherwise as video. */
-export const postsAsPhotos = (format: string, platform: PlatformId) => format === "slideshow" && !!platforms[platform].photos;
+/** Formats made only of pictures (carousels): they go out as photos, and only where a network takes photo posts. */
+export const photoOnly = (format: string) => format === "carousel";
+/**
+ * How a post goes out on a network: slideshows and carousels post as photos where the network has them (an Instagram
+ * carousel, a TikTok photo post, a LinkedIn multi-image post); slideshows go as video elsewhere.
+ */
+export const postsAsPhotos = (format: string, platform: PlatformId) => (format === "slideshow" || photoOnly(format)) && !!platforms[platform].photos;
+/** Why a pictures-only post cannot go to a network without photo posts (YouTube), or null. */
+export function photosRefused(format: string, platform: PlatformId): string | null {
+  return photoOnly(format) && !platforms[platform].photos ? `${platforms[platform].name} takes videos only, so a carousel can't go there. Post it to Instagram, TikTok or LinkedIn.` : null;
+}

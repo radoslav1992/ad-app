@@ -18,8 +18,12 @@ Workflows, Containers (FFmpeg) and Workers AI, with Stripe billing. Much of rech
 
 - **Onboarding (8 steps).** Company name and logo come first. Next is the brand analysis, from a website or app store link, or a written description; it runs in the background while you answer a few questions about yourself and your business. The last step shows the two ways to create content.
 - **Brand profile.** The website scan reads up to 3 pages: the homepage and up to two key pages (about, pricing, features). A text model turns them into the profile: product, audience, value props, pain points, tone, CTA and colours. The best website images are saved as brand images. Everything stays editable.
-- **Seven formats.**
+- **Eight formats.**
   - **Slideshow:** photo carousel with bold text.
+  - **Carousel:** designed, text-led slides to swipe (4:5 or 1:1): a bold hook over a striking picture, one point per
+    slide and a call to action last, in one of six themes with your brand kit (colours, fonts, logo, handle and an
+    optional character that every AI picture keeps). Posts as an Instagram carousel, a TikTok photo post or a LinkedIn
+    multi-image post; downloads as slides or one PDF.
   - **Wall of Text:** a thought written over a reaction or b-roll clip.
   - **Video Hook & Demo:** a 3-second reaction, then your product demo.
   - **Green Screen Meme:** a creator keyed over your screenshot.
@@ -33,7 +37,7 @@ Workflows, Containers (FFmpeg) and Workers AI, with Stripe billing. Much of rech
 - **Create.** Pick the format, media, style and topic, and whether to mention the brand; then *Generate*. A narrated
   video opens on a timeline of its voice: drag scene edges, split and merge scenes, choose each picture and transition,
   and see the exact price before *Make video*. Edit the words and the text look (weight, size, colour, stroke, box, position) with a live preview that uses the renderer's own fonts and layout. Save, and it renders in the background.
-- **Calendar and auto-publishing.** You connect TikTok, Instagram, YouTube and LinkedIn with OAuth; tokens are stored encrypted. Posting times are set per weekday in the workspace's time zone. A cron publishes due posts every minute: slideshows go out as photo carousels where the network supports them, everything else as video.
+- **Calendar and auto-publishing.** You connect TikTok, Instagram, YouTube and LinkedIn with OAuth; tokens are stored encrypted. Posting times are set per weekday in the workspace's time zone. A cron publishes due posts every minute: slideshows go out as photo carousels where the network supports them, carousels only as photos (never to YouTube), everything else as video.
 - **Automations.** Fresh posts for review every day, only while the review queue is short.
 - **AI Studio and Creators.** AI images, and AI creators made from a description or from your own photo (with consent).
 - **Speech.** Uploaded videos are transcribed (ElevenLabs Scribe) for subtitles, captions and instant cuts that remove

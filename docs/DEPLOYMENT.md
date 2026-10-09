@@ -17,7 +17,7 @@ npx wrangler r2 bucket create ad-app-media
 Then apply the schema (once, and again whenever a new file lands in `migrations/`):
 
 ```sh
-npm run db:remote                        # applies every migration not applied yet (0001_initial.sql … 0005_clips.sql)
+npm run db:remote                        # applies every migration not applied yet (0001_initial.sql … 0006_carousels.sql)
 ```
 
 **0002 (analytics):** run `npm run db:remote` *before* deploying the version that uses it. It only adds columns to
@@ -38,6 +38,18 @@ the new version's checkout, admin Billing and Operations tabs and the hourly sum
 follows; run kind `speech`), keeping every row, index and trigger. Apply it *before* deploying the version that uses
 it, at a quiet moment: while it runs, writes to posts and runs wait. The previous version keeps working on the
 rebuilt tables.
+
+**0006 (carousels):** rebuilds `posts` once more, now *without* a CHECK list on `format` (formats are validated by
+zod on every write, so later formats need no rebuild), with the same technique as 0005 (keys moved aside so nothing
+cascades, every index and trigger recreated word for word; `tests/carousel.test.ts` proves it with rows in runs,
+media_assets and publications), and adds the nullable column `publications.saves` (Instagram saves). Apply it *before*
+deploying the version that uses it, at a quiet moment (writes to posts wait while it runs). The running version keeps
+working on the rebuilt table and ignores `saves`; without the migration the new version cannot create carousels
+(`CHECK constraint failed`) and the stats cron fails on `saves`. Check with
+`npx wrangler d1 migrations list ad-app --remote` and
+`npx wrangler d1 execute ad-app --remote --command "SELECT sql FROM sqlite_schema WHERE name='posts'"` (no `CHECK(format`).
+The renderer image must be deployed with this version too: older renderers refuse the 4:5 and 1:1 slide sizes.
+Carousel pictures that keep a character use `fal-ai/nano-banana-pro/edit` (the same `FAL_KEY`).
 
 - **R2:** add a lifecycle rule to *abort incomplete multipart uploads after 1 day*. Do **not** add an object-expiry
   rule; the app deletes files itself.

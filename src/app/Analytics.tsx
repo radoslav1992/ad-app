@@ -11,7 +11,7 @@ import { PlatformIcon } from "./ScheduleDialog";
 import { compact, engagementOf, formatMoney, orDash, plural } from "./stats";
 import { platforms } from "../../shared/social";
 import { PRODUCT } from "../../shared/brand";
-import type { AnalyticsResponse, NetworkRow, SetupResponse, TopPost } from "../../shared/analytics";
+import { RATE_HINTS, rates, type AnalyticsResponse, type NetworkRow, type SetupResponse, type TopPost } from "../../shared/analytics";
 
 // How the workspace's posts are doing: lifetime stats from the networks for posts published in the range, clicks on
 // tracked links and the sales they led to, per network and per post; and the setup for links and sale tracking.
@@ -296,6 +296,10 @@ function TopPosts({ a }: { a: AnalyticsResponse }) {
         <div>
           <h2 id="an-top-title">Top posts</h2>
           <p className="small muted">Each post per network, published in this period or bringing clicks and sales in it.</p>
+          <p className="small muted an-rate-note">
+            The share and save rates are per view. A rule of thumb from creators: posts shared by {Math.round(RATE_HINTS.shares * 100)}% or saved by{" "}
+            {Math.round(RATE_HINTS.saves * 100)}% of their viewers tend to reach many more people (marked in green). A sign, not a promise. Only Instagram reports saves.
+          </p>
         </div>
         <div className="an-sort" role="group" aria-label="Sort top posts by">
           {(Object.keys(sortLabels) as SortKey[]).map((k) => (
@@ -318,15 +322,20 @@ function TopRow({ p, rank, sort }: { p: TopPost; rank: number; sort: SortKey }) 
   const name = platforms[p.platform].name;
   const engagement = engagementOf(p);
   const rate = engagement !== null && p.views ? `${((engagement / p.views) * 100).toFixed(1)}%` : null;
+  // Shares and saves per view, marked when they reach the rule of thumb.
+  const r = rates(p);
+  const share = (n: number | null, of: number | null, hint: number, what: string) => (n === null ? "–" : (
+    <>{compact(n)}{of !== null && <small className={of >= hint ? "an-strong" : undefined} title={`${(of * 100).toFixed(1)}% of views ${what}${of >= hint ? ` (${Math.round(hint * 100)}% or more often goes far)` : ""}`}>{(of * 100).toFixed(1)}%</small>}</>
+  ));
   const to = `/app/content?post=${p.postId}`;
   const hook = p.deleted ? "Deleted post" : p.hook || "Untitled post";
-  const stat = (key: SortKey | "engagement" | "revenue", label: string, value: ReactNode) => (
+  const stat = (key: SortKey | "engagement" | "revenue" | "shares" | "saves", label: string, value: ReactNode) => (
     <div className={key === sort ? "sorted" : undefined}><dt>{label}</dt><dd>{value}</dd></div>
   );
   return (
     <li className="an-top-row">
       <span className="an-rank" aria-hidden="true">{rank}</span>
-      <span className="an-thumb">{p.thumbAssetId && !p.deleted ? <img src={fileUrl(p.thumbAssetId)} alt="" loading="lazy" /> : <Film size={18} aria-hidden="true" />}</span>
+      <span className="an-thumb">{p.thumbAssetId && !p.deleted ? <img src={fileUrl(p.thumbAssetId)} alt="" loading="lazy" className={p.format === "carousel" ? "whole" : undefined} /> : <Film size={18} aria-hidden="true" />}</span>
       <div className="an-top-main">
         {p.deleted ? <span className="an-top-hook">{hook}</span> : <Link to={to} className="an-top-hook">{hook}</Link>}
         <span className="an-top-meta">
@@ -338,6 +347,8 @@ function TopRow({ p, rank, sort }: { p: TopPost; rank: number; sort: SortKey }) 
       <dl className="an-top-stats">
         {stat("views", "Views", p.platform === "linkedin" ? <span className="an-na">Not shared</span> : orDash(p.views))}
         {stat("engagement", "Engagement", engagement === null ? "–" : <>{compact(engagement)}{rate && <small>{rate}</small>}</>)}
+        {stat("shares", "Shares", share(p.shares, r.shares, RATE_HINTS.shares, "shared it"))}
+        {stat("saves", "Saves", share(p.saves, r.saves, RATE_HINTS.saves, "saved it"))}
         {stat("clicks", "Clicks", compact(p.clicks))}
         {stat("conversions", "Sales", compact(p.conversions))}
         {stat("revenue", "Revenue", formatMoney(p.revenue) || "–")}

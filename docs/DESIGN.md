@@ -56,8 +56,8 @@ opens Blitz and starts the first batch of posts as soon as the brand analysis is
   overlay with a hand and **Got it**. Top right: **Generate more** and **Configure** (formats, AI credits).
   The reference's "Remixed From" panel shows the viral video a post copies; ours shows **Built on**: the proven hook
   pattern (no third-party videos or view counts).
-- **Create** (manual creation, from the owner's demo video): format tabs (Slideshow, Wall of Text, Video Hook & Demo,
-  Green Screen Meme, AI UGC, Narrated Video, Clip); left panel with Mode (Create new / Remix), "Mention your business?", media pickers
+- **Create** (manual creation, from the owner's demo video): format tabs (Slideshow, Carousel, Wall of Text, Video Hook &
+  Demo, Green Screen Meme, AI UGC, Narrated Video, Clip); left panel with Mode (Create new / Remix), "Mention your business?", media pickers
   (video, audio, creator), style and prompt, **Generate**; right panel with Proven formats / Preview and an
   inspector for the text (preset, weight, size, colour, stroke, box, position, animation), swaps, slides and audio;
   **Save & build**. The preview plays the post's text animation and captions on a canvas, in sync with the video when
@@ -87,6 +87,20 @@ opens Blitz and starts the first batch of posts as soon as the brand analysis is
   key word in bold, the voice and the music; zoom buttons. Then **Subtitles** (switch and the style grid; "Key word" by
   default) and **Plan and price**: voice, AI pictures, AI clips, own media, the total and the credits left; the main
   button reads **Make video · N credits** and is the only thing that spends.
+- **Carousel** tab of Create (after a creator whose faceless Instagram carousels are read, saved and shared: a bold hook
+  over a striking picture, one point per slide, the call to action last). Left: Mode, Mention, Style, AI images, the
+  topic and **Generate**; then the caption and hashtags. Right: an Instagram-like phone (the account, the slides side by
+  side to swipe or scroll, a "2/7" badge, dots and previous/next buttons) beside the **slides** (each with its kind and
+  words; move up/down, duplicate, delete, add; all buttons) and the selected slide's fields: kind (cover, point, call
+  to action), hook or point, explanation, label (a number shows big, a word as a tag) and the picture (my picture, AI
+  picture with its price, no picture). Below: **Call to action** (comment a keyword — shown big on the slide — link in
+  bio, save and share, follow; editable words; the caption's last line follows), **Design** (six live theme tiles drawn
+  by the render's layout with this carousel's words and colours, a radio group; Portrait 4:5 "uses the most of the
+  screen" or Square 1:1 "uses less"; the cover's picture behind or under the hook; slide numbers; the swipe cue),
+  **Brand kit** (handle, logo, brand and second colour each with what it tends to suggest, page colour, heading and
+  text fonts, a character or mascot for AI pictures at 2 credits each; *Save as my default*) and **Plan and price**.
+  Blitz and Content show a carousel's slides at their shape with dots and previous/next buttons beside them (Blitz
+  cards are dragged to decide, so the slides never are); Content downloads every slide and all of them as one PDF.
 - **Clip** tab of Create: edits a clip post (or a moment opened from the Clips page): the moment (start, length),
   Remove pauses, Follow the speaker, the on-screen title and the caption style. The preview plays the kept parts and,
   once the speaker was found, slides the wide picture as the render crops it.

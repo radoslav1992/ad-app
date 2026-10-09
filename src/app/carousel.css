@@ -1,0 +1,61 @@
+/* The Carousel tab of Create: the phone preview, the slide list and fields, the themes and the brand kit. */
+/* Specific enough to win over .preview-grid (create.css loads after this file). */
+.preview-grid.cr-grid { grid-template-columns: minmax(260px, 360px) minmax(280px, 330px); }
+.cr-canvas, .cr-tile { display: block; width: 100%; height: auto; }
+.cr-note { margin: 8px 2px 0; }
+
+/* An Instagram-like post: the account, the slides side by side (scroll-snapped), the dots under them. */
+.cr-phone { background: #fff; border: 1px solid var(--line); border-radius: 22px; overflow: hidden; box-shadow: 0 18px 40px rgba(15, 17, 21, 0.14); }
+.cr-phone-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; font-size: 13px; }
+.cr-avatar { width: 28px; height: 28px; border-radius: 50%; object-fit: contain; background: #f1f3f6; border: 1px solid var(--line); display: grid; place-items: center; font-weight: 700; font-size: 12px; color: var(--text); }
+.cr-stage { position: relative; background: #0b0d12; }
+.cr-track { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; }
+.cr-track::-webkit-scrollbar { display: none; }
+.cr-slot { flex: 0 0 100%; scroll-snap-align: start; }
+.cr-count { position: absolute; top: 10px; right: 10px; background: rgba(15, 17, 21, 0.7); color: #fff; font-size: 12px; font-weight: 600; border-radius: 12px; padding: 3px 8px; pointer-events: none; }
+.cr-dots { display: flex; justify-content: center; gap: 2px; padding: 8px 0 10px; }
+.cr-dots button { border: 0; background: none; padding: 5px 3px; cursor: pointer; display: grid; place-items: center; }
+.cr-dots span { width: 6px; height: 6px; border-radius: 50%; background: #c4c9d2; }
+.cr-dots button.on span { background: #3b82f6; }
+
+/* Slides */
+.cr-inspector { min-width: 0; }
+.cr-slides { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.cr-slides li { display: flex; align-items: center; gap: 2px; border: 1px solid var(--line); background: #fff; border-radius: 12px; padding: 2px 4px 2px 2px; min-width: 0; }
+.cr-slides li.on { border-color: var(--navy); box-shadow: inset 3px 0 0 var(--brand); }
+.cr-slide-pick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; border: 0; background: none; padding: 6px; text-align: left; cursor: pointer; color: var(--text); border-radius: 10px; }
+.cr-slide-n { flex: 0 0 22px; height: 22px; border-radius: 7px; background: #eef0f4; display: grid; place-items: center; font-size: 12px; font-weight: 700; }
+.cr-slides li.on .cr-slide-n { background: var(--navy); color: #fff; }
+.cr-slide-text { min-width: 0; font-size: 13px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.cr-kind { display: block; font-size: 11px; color: var(--muted); font-weight: 600; }
+.cr-slide-tools { display: flex; flex: 0 0 auto; }
+.cr-slide-tools .btn.icon.sm { width: 26px; height: 26px; padding: 0; }
+.cr-fields .select.sm { padding: 4px 8px; font-size: 13px; }
+.cr-picked { gap: 8px; align-items: center; }
+.cr-picked img { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; border: 1px solid var(--line); }
+.cr-logo { height: 22px; max-width: 80px; object-fit: contain; }
+
+/* Sections under the preview */
+.style-grid.cr-themes { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.cr-themes .cr-tile { border-radius: 9px; margin-bottom: 4px; box-shadow: 0 0 0 1px rgba(15, 17, 21, 0.08); }
+.cr-design-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cr-design-row .seg { grid-auto-columns: max-content; }
+.cr-cta { grid-auto-columns: minmax(0, 1fr); }
+.cr-cta-fields { gap: 10px; align-items: flex-start; }
+.cr-cta-fields .grow { flex: 1 1 260px; }
+.cr-keyword { text-transform: uppercase; font-weight: 700; letter-spacing: 0.04em; max-width: 180px; }
+.cr-kit { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 22px; align-items: start; }
+.cr-colour { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.cr-colour .color-field { width: 100%; }
+.cr-price { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.cr-price strong { font-size: 18px; }
+
+@media (max-width: 1100px) {
+  .preview-grid.cr-grid { grid-template-columns: minmax(0, 420px); justify-content: center; }
+  .style-grid.cr-themes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .cr-kit { grid-template-columns: 1fr; }
+  .seg.cr-cta { grid-auto-flow: row; grid-template-columns: 1fr 1fr; }
+  .cr-design-row .seg { grid-auto-columns: minmax(0, 1fr); width: 100%; }
+}

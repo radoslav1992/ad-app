@@ -11,7 +11,8 @@ import type { TransitionKind } from "./story";
 //   GET    /jobs/:id/file/:n  → the n-th output file (video/mp4 or image/jpeg)
 //   DELETE /jobs/:id          → forgets the job (stops it if running)
 
-/** Every frame is 9:16 portrait at 1080 × 1920, the size all short-form networks show full-screen. */
+/** Every video frame is 9:16 portrait at 1080 × 1920, the size all short-form networks show full-screen (carousel
+ *  stills are 1080 × 1350 or 1080 × 1080, shared/carousel.ts). */
 export const FRAME = { width: 1080, height: 1920 } as const;
 
 export type ComposeSegment = {
@@ -80,8 +81,16 @@ export type StillsPayload = {
   urls: string[];
   width: number;
   height: number;
-  /** 1–10 slides: the image (or a solid colour) cover-cropped to the frame, then its ASS burned in → file i (JPEG). */
-  slides: { input?: number; color?: string; ass: string }[];
+  /**
+   * 1–10 slides → file i (JPEG): the image cover-cropped to the frame, or a solid colour; then its ASS burned in. With
+   * `box` (a carousel), the page is `color` and the image is cover-cropped into the box (corners rounded by `radius`)
+   * before the ASS; a `logo` is fitted inside its box (keeping its shape, centred) over everything.
+   */
+  slides: {
+    input?: number; color?: string; ass: string;
+    box?: { x: number; y: number; w: number; h: number; radius: number };
+    logo?: { input: number; x: number; y: number; w: number; h: number };
+  }[];
   synthetic: boolean;
 };
 /**

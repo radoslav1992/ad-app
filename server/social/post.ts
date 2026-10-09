@@ -1,5 +1,5 @@
 import { json } from "../db";
-import { platforms, postsAsPhotos, type PlatformId } from "../../shared/social";
+import { photosRefused, platforms, postsAsPhotos, type PlatformId } from "../../shared/social";
 import { clip } from "./http";
 
 // How a post goes out on a network: its text, title and media checks.
@@ -54,6 +54,8 @@ const span = (s: number) => (s % 60 === 0 ? `${s / 60} minute${s === 60 ? "" : "
 /** Why the post cannot go to this network as it is, or null. */
 export function unfit(post: PostRow, platform: PlatformId): string | null {
   const facts = platforms[platform];
+  const refused = photosRefused(post.format, platform);
+  if (refused) return refused;
   if (postsAsPhotos(post.format, platform))
     return json<unknown[]>(post.slides, []).length ? null : `This post has no slides to send to ${facts.name}.`;
   if (!post.video_asset) return "This post has no video yet.";

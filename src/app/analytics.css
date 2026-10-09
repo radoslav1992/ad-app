@@ -87,21 +87,27 @@
 .an-rank { font-family: var(--display); font-weight: 700; color: var(--soft); font-size: 18px; text-align: center; }
 .an-thumb { width: 48px; aspect-ratio: 9 / 16; border-radius: 9px; overflow: hidden; background: #e9ebef; display: grid; place-items: center; color: var(--muted); }
 .an-thumb img { width: 100%; height: 100%; object-fit: cover; }
+/* A carousel's cover is 4:5 or 1:1: shown whole. */
+.an-thumb img.whole { object-fit: contain; background: #15171d; }
 .an-top-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .an-top-hook { font-weight: 600; text-decoration: none; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 a.an-top-hook:hover { text-decoration: underline; }
 .an-top-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
 .an-top-meta a { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; color: var(--text); text-decoration: none; }
 .an-top-meta a:hover { text-decoration: underline; }
-.an-top-stats { display: grid; grid-template-columns: repeat(5, 92px); gap: 6px; margin: 0; }
+.an-top-stats { display: grid; grid-template-columns: repeat(7, 84px); gap: 6px; margin: 0; }
 .an-top-stats div { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; min-width: 0; }
 .an-top-stats dt { font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
 .an-top-stats dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.an-top-stats dd small { font-weight: 500; color: var(--muted); margin-left: 3px; }
+/* Rates (engagement, shares and saves per view) on their own line under the count, so neither is cut off. */
+.an-top-stats dd small { display: block; font-weight: 500; font-size: 12px; color: var(--muted); }
+/* A save or share rate at or past the rule of thumb (shared/analytics.ts RATE_HINTS). */
+.an-top-stats dd small.an-strong { color: #15803d; font-weight: 700; }
+.an-rate-note { margin: -4px 0 6px; }
 .an-top-stats .sorted dd { color: var(--text); text-decoration: underline; text-decoration-color: var(--brand); text-decoration-thickness: 3px; text-underline-offset: 4px; }
 @media (max-width: 1100px) {
   .an-top-row { grid-template-columns: 30px 48px minmax(0, 1fr); }
-  .an-top-stats { grid-column: 3 / -1; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .an-top-stats { grid-column: 3 / -1; grid-template-columns: repeat(4, minmax(0, 1fr)); row-gap: 8px; }
   .an-top-stats div { align-items: flex-start; }
 }
 @media (max-width: 560px) {

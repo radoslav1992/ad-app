@@ -67,7 +67,7 @@ export function Home() {
             <div className="media-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
               {recent.slice(0, 8).map((p) => (
                 <Link key={p.id} to="/app/content" className="thumb" title={p.hook}>
-                  {p.renderStatus === "ready" && (p.slides[0] || p.coverAssetId) ? <img src={fileUrl(p.slides[0] || p.coverAssetId)} alt={p.hook} loading="lazy" /> : null}
+                  {p.renderStatus === "ready" && (p.slides[0] || p.coverAssetId) ? <img src={fileUrl(p.slides[0] || p.coverAssetId)} alt={p.hook} loading="lazy" className={p.format === "carousel" ? "whole" : undefined} /> : null}
                   <span className="thumb-label">{formats[p.format].name}</span>
                 </Link>
               ))}

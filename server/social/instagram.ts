@@ -56,13 +56,14 @@ async function longLived(url: string): Promise<Tokens> {
   return { accessToken: d.access_token, expiresAt: now() + (Number(d.expires_in) || 60 * DAY) };
 }
 
-/** A media insights answer (metric=views,shares) as counts; a metric Instagram didn't return stays null. */
-export function instagramInsights(body: any): { views: number | null; shares: number | null } {
-  const out: { views: number | null; shares: number | null } = { views: null, shares: null };
+/** A media insights answer (metric=views,shares,saved) as counts; a metric Instagram didn't return stays null. */
+export function instagramInsights(body: any): { views: number | null; shares: number | null; saves: number | null } {
+  const out: { views: number | null; shares: number | null; saves: number | null } = { views: null, shares: null, saves: null };
   for (const m of Array.isArray(body?.data) ? body.data : []) {
     const value = count(m?.values?.[0]?.value ?? m?.total_value?.value);
     if (m?.name === "views") out.views = value;
     if (m?.name === "shares") out.shares = value;
+    if (m?.name === "saved") out.saves = value;
   }
   return out;
 }
@@ -203,7 +204,7 @@ export const instagram: Platform = {
       else {
         try {
           // https://developers.facebook.com/docs/instagram-platform/reference/instagram-media/insights
-          Object.assign(s, instagramInsights(await graph(tokens, `/${mediaId}/insights`, { query: { metric: "views,shares" } })));
+          Object.assign(s, instagramInsights(await graph(tokens, `/${mediaId}/insights`, { query: { metric: "views,shares,saved" } })));
         } catch (e) {
           if (!(e instanceof SocialError) || e.code === "AUTH_EXPIRED" || e.retryable) throw e;
           // A permission error: the connection predates the insights scope. Any other refusal is a metric this kind of

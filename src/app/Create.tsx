@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Plus, RefreshCw, Shuffle, Sparkles, Trash2, Wand2, ChevronLeft, ChevronRight, Lightbulb, Save, VolumeX, Volume2, AudioLines, Scissors } from "lucide-react";
-import { api, errorText, fileUrl, newKey, post, put, usePoll, useAuth, type Asset, type Character, type LibraryItem, type Post } from "../lib";
+import { api, errorText, fileUrl, newKey, post, put, usePoll, useAuth, type Asset, type Character, type LibraryItem, type Post, type Workspace } from "../lib";
 import { useCurrentWorkspace } from "./workspace";
 import { TextPreview, type PreviewBackground, type TextBlock } from "./TextPreview";
 import { CaptionStylePicker, EditorSection, TextAnimationPicker } from "./CaptionPickers";
@@ -10,6 +10,8 @@ import { CreatorField } from "./creators";
 import { BrollPanel, BrollStrip, useBroll } from "./BrollPanel";
 import { ClipInspector, ClipPreview, CutsField, previewCuts } from "./clip-editor";
 import { StoryEditor, StoryInputs, defaultStoryInput, type StoryInput } from "./StoryEditor";
+import { CarouselEditor } from "./CarouselEditor";
+import { ctaPresets, defaultKit } from "../../shared/carousel";
 import { useUploadTiming } from "./story-model";
 import { Switch, useToast } from "../ui";
 import { postFormatIds, formats, recordingCurrent, specCredits, specSchema, CLIP_TITLE_SECONDS, HOOK_CLIP_MAX_SECONDS, type ClipSpec, type PostFormatId, type Spec, type StorySpec, type Subtitles } from "../../shared/formats";
@@ -34,9 +36,20 @@ import "./create.css";
 type Picked = { url: string; kind: "image" | "video" | "audio"; name: string; duration?: number; speech?: SpeechStatus | null; words?: CaptionWord[]; range?: [number, number] };
 type MediaAsset = Asset & { speech?: SpeechStatus | null; transcript?: { language: string; words: CaptionWord[] } | null };
 type Picker = null | { type: "image" | "video" | "audio"; target: string } | { library: "clip" | "greenscreen" | "music"; target: string };
-const blankSpec = (format: PostFormatId, accent: string): Spec | null => {
+const blankSpec = (format: PostFormatId, workspace: Workspace): Spec | null => {
+  const accent = workspace.profile.colors.primary;
   const parsed = specSchema.safeParse(
     format === "slideshow" ? { format, slides: [{ text: "Your hook here", image: { color: accent } }, { text: "Your point here", image: { color: accent } }], look: textPresets.box.look }
+      // A carousel starts with the formula: a hook, one point per slide, the call to action last, in the brand kit.
+      : format === "carousel" ? {
+        format, brand: defaultKit(workspace), cta: { type: "save", text: ctaPresets.save.text }, caption: ctaPresets.save.text,
+        slides: [
+          { kind: "cover", title: "Your bold hook here" },
+          { kind: "content", label: "01", title: "Your first point", body: "One idea per slide, said simply." },
+          { kind: "content", label: "02", title: "Your second point", body: "Short sentences read best on a phone." },
+          { kind: "cta", title: "Found this useful?" },
+        ],
+      }
       : format === "text" ? { format, text: "your thought here", background: { color: accent } }
         : format === "green_screen" ? null : format === "hook_demo" ? null : null,
   );
@@ -119,7 +132,7 @@ export function Create() {
       format, source: { assetId: params.get("asset"), start: Number(params.get("start")), end: Number(params.get("end")) }, hook: params.get("title") || "", title: params.get("title") || "",
       cuts: { enabled: true, fillers: true }, topic: "Clip",
     }) : null;
-    const next = moment?.success ? moment.data : blankSpec(format, workspace.profile.colors.primary);
+    const next = moment?.success ? moment.data : blankSpec(format, workspace);
     setSpec(next);
     if (next?.format === "clip") { setTab("preview"); void resolve(next); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -210,7 +223,7 @@ export function Create() {
         toast(<>Building your post! It'll be ready in a few minutes. <Link to="/app/content">View in Content</Link></>, "good");
         setSpec(null);
         setSaveKey(newKey());
-        setSpec(blankSpec(format, workspace.profile.colors.primary));
+        setSpec(blankSpec(format, workspace));
         setTab("inspiration");
       }
       void refresh();
@@ -311,7 +324,7 @@ export function Create() {
       return <TextPreview blocks={[block(spec.hook, look, seconds)]} seconds={seconds} replay={replay} background={clip ? { url: clip.url, kind: "video" } : { color: "#1e2433" }} />;
     }
     if (spec.format === "clip") return <ClipPreview spec={spec} source={clipSource ? { url: clipSource.url, duration: clipSource.duration || 0, words: clipSource.words || [] } : null} />;
-    if (spec.format === "story") return null; // StoryEditor has its own preview
+    if (spec.format === "story" || spec.format === "carousel") return null; // they have their own editors and previews
     // AI UGC: the made recording with its real word timings, or the creator's picture with a sample of the script.
     if (recordingCurrent(spec) && spec.generated?.videoAssetId && spec.generated.words.length) {
       return <TextPreview blocks={[block(spec.hook, look, 3)]} seconds={existing?.duration || 600} videoClock sound replay={replay}
@@ -328,7 +341,7 @@ export function Create() {
       <div className="format-tabs" role="tablist" aria-label="Format">
         {postFormatIds.map((f) => (
           <button key={f} role="tab" aria-selected={format === f} disabled={!!editing && format !== f}
-            onClick={() => { setFormat(f); setSpec(blankSpec(f, workspace.profile.colors.primary)); setSlide(0); }}>{formats[f].name}</button>
+            onClick={() => { setFormat(f); setSpec(blankSpec(f, workspace)); setSlide(0); }}>{formats[f].name}</button>
         ))}
       </div>
       <h1 className="sr-only">{editing ? "Edit post" : "Create a post"}</h1>
@@ -375,7 +388,7 @@ export function Create() {
                   timing={recording.timing} aligning={recording.busy} alignError={recording.error} onAlign={() => void matchScript()}
                   onPickRecording={(type) => setPicker({ type, target: "input:storyAudio" })} />
               )}
-              {format !== "ugc" && format !== "story" && <InputRow label="Audio" value={picked(inputs.musicTrackId)?.name} onChange={() => setPicker({ library: "music", target: "input:musicTrackId" })} onClear={() => setInputs({ ...inputs, musicTrackId: undefined })} />}
+              {format !== "ugc" && format !== "story" && format !== "carousel" && <InputRow label="Audio" value={picked(inputs.musicTrackId)?.name} onChange={() => setPicker({ library: "music", target: "input:musicTrackId" })} onClear={() => setInputs({ ...inputs, musicTrackId: undefined })} />}
               {format === "ugc" && (
                 <div className="card flat stack">
                   <CreatorField value={inputs.characterId} onClear={() => setInputs({ ...inputs, characterId: undefined })}
@@ -387,7 +400,7 @@ export function Create() {
                   </label>
                 </div>
               )}
-              {(format === "text" || format === "slideshow") && (
+              {(format === "text" || format === "slideshow" || format === "carousel") && (
                 <label className="card flat field"><span>Style</span>
                   <select className="select" value={style} onChange={(e) => setStyle(e.target.value as WritingStyle)}>
                     {writingStyleIds.map((s) => <option key={s} value={s}>{writingStyles[s].name}</option>)}
@@ -403,7 +416,7 @@ export function Create() {
               {writing && (
                 <label className="card flat field"><span>{format === "story" ? "Topic" : "Prompt"} <span className="muted small">(optional)</span></span>
                   <textarea className="textarea" rows={3} value={prompt} maxLength={400} onChange={(e) => setPrompt(e.target.value)}
-                    placeholder={format === "slideshow" ? "What should this slideshow be about?" : format === "ugc" ? "What should the creator talk about?" : format === "story" ? "What should the video explain? Empty: something your audience cares about." : "What should the post be about?"} />
+                    placeholder={format === "slideshow" ? "What should this slideshow be about?" : format === "carousel" ? "What should the carousel teach or show? E.g. 5 mistakes people make when…" : format === "ugc" ? "What should the creator talk about?" : format === "story" ? "What should the video explain? Empty: something your audience cares about." : "What should the post be about?"} />
                 </label>
               )}
               <button className="btn primary big block" onClick={generate}
@@ -418,6 +431,7 @@ export function Create() {
               <strong>Editing: {formats[existing.format].name}</strong>
               <p className="muted small">{existing.format === "story"
                 ? "Scene edges, transitions, subtitles and text re-render for free. New pictures, clips, or new words for an AI voice use credits."
+                : existing.format === "carousel" ? "Words, theme and brand kit changes make the slides again for free. New AI pictures use credits."
                 : "Text and look changes re-render the post for free. New AI pictures or a new script for a creator use credits."}</p>
               <Link className="btn" to="/app/content">Back to Content</Link>
             </div>
@@ -435,7 +449,7 @@ export function Create() {
               <button role="tab" aria-selected={tab === "preview"} onClick={() => setTab("preview")}>Preview</button>
             </div>
             <div className="toolbar">
-              {spec && !editing && <button className="btn sm ghost" onClick={() => { setSpec(blankSpec(format, workspace.profile.colors.primary)); setSlide(0); }}><RefreshCw size={14} /> Clear</button>}
+              {spec && !editing && <button className="btn sm ghost" onClick={() => { setSpec(blankSpec(format, workspace)); setSlide(0); }}><RefreshCw size={14} /> Clear</button>}
               <button className="btn primary" disabled={!spec || busy !== ""} onClick={save}>
                 {busy === "save" ? <span className="spinner" /> : <Save size={16} />} {format === "story" ? (existing ? "Save & make" : "Make video") : existing ? "Save" : "Save & build"}{credits > 0 ? ` · ${creditsLabel(credits)}` : ""}
               </button>
@@ -452,6 +466,8 @@ export function Create() {
                 </article>
               ))}
             </div>
+          ) : spec?.format === "carousel" ? (
+            <CarouselEditor spec={spec} onChange={(next) => setSpec(next)} workspace={workspace} creditsLeft={user ? Math.max(0, user.limit - user.used) : null} />
           ) : spec?.format === "story" ? (
             <StoryEditor spec={spec} onChange={(next) => setSpec(next)} workspaceId={workspace.id} upload={recording.timing} renderedSeconds={existing?.duration || undefined}
               creditsLeft={user ? Math.max(0, user.limit - user.used) : null} music={spec.music ? picked(spec.music.trackId || spec.music.assetId)?.name || "Music" : null}
@@ -708,9 +724,9 @@ function Inspector({ spec, look, setLook, slide, setSlide, onChange, pick, aiPro
       )}
       <hr />
       <div className="stack" style={{ gap: 8 }}>
-        <button className="btn sm" onClick={() => pick({ library: "music", target: "music" })}>{spec.music ? "Swap audio" : "Add audio"}</button>
-        {spec.music && <button className="btn sm ghost" onClick={() => onChange({ music: null })}>Remove audio</button>}
-        {spec.music && range("Music volume", spec.music.volume, 0, 1, 0.05, (v) => onChange({ music: { ...spec.music!, volume: v } }), "x")}
+        <button className="btn sm" onClick={() => pick({ library: "music", target: "music" })}>{"music" in spec && spec.music ? "Swap audio" : "Add audio"}</button>
+        {"music" in spec && spec.music && <button className="btn sm ghost" onClick={() => onChange({ music: null })}>Remove audio</button>}
+        {"music" in spec && spec.music && range("Music volume", spec.music.volume, 0, 1, 0.05, (v) => onChange({ music: { ...spec.music!, volume: v } }), "x")}
       </div>
       <p className="muted small">The preview uses the same fonts and layout as the final video.</p>
     </div>

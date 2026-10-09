@@ -49,7 +49,7 @@ Meta require https: use a tunnel such as `cloudflared tunnel --url http://localh
 2. Add products **Login Kit** and **Content Posting API**. In Content Posting API turn on **Direct Post**.
 3. Scopes: `user.info.basic`, `video.publish` and `video.list` (post stats; see "Post stats" below).
 4. Login Kit → Redirect URI: `${SITE_URL}/api/accounts/callback/tiktok`.
-5. **Verify the media domain** (URL properties): photo posts use `PULL_FROM_URL`, so TikTok downloads each slide from
+5. **Verify the media domain** (URL properties): photo posts (slideshows and carousels) use `PULL_FROM_URL`, so TikTok downloads each slide from
    `${SITE_URL}/api/publish-media/...`. Verify the `SITE_URL` domain (DNS TXT record) or the URL prefix
    `${SITE_URL}/api/publish-media/`. Without it photo posts fail with "Publishing to TikTok is not set up right now"
    (`url_ownership_unverified`). Videos are uploaded as files and need no verification.
@@ -82,7 +82,10 @@ Tokens: access 24 hours, refresh 365 days (renewed automatically when publishing
    users) can connect.
 
 Only **professional accounts** (Business or Creator) work; personal accounts cannot log in through this flow. Reels
-are 3 s–15 min; carousels take up to 10 images (JPEG). Instagram downloads the media from our media links, which work
+are 3 s–15 min; carousels take up to 10 images (JPEG) with aspect ratios from 4:5 to 1.91:1, so carousel posts (4:5 or
+1:1) and slideshow slides fit. The publishing API cannot add music to a carousel: to add a trending sound, people
+download the slides and post them from the Instagram app. Replying to "comment a keyword" calls to action by direct
+message is not automated (a possible later feature: it needs the messaging permissions and their review). Instagram downloads the media from our media links, which work
 only while the post is publishing and for at most 24 hours. Accounts have a rolling 24-hour publishing limit
 (`/{ig-user-id}/content_publishing_limit`); hitting it shows "Instagram is limiting how often this account can post".
 
@@ -110,6 +113,9 @@ Limits until then:
 - Quota: the default is 10,000 units a day per project and an upload costs 1,600 units (check Google's quota
   calculator) — about six uploads a day; ask for more in the audit form.
 
+YouTube has no photo posts: carousels are never offered for YouTube accounts (`photosRefused` in `shared/social.ts`;
+the schedule route and auto-scheduling refuse or skip them with "YouTube takes videos only…").
+
 Uploads use the resumable protocol in 16 MiB chunks; an interrupted upload is resumed through the same session, so it
 never creates a second video. Videos are posted as Shorts (vertical, at most 3 minutes): the description ends with
 `#Shorts` and the link is `https://youtube.com/shorts/<id>`. `containsSyntheticMedia` is set for posts with AI people,
@@ -123,7 +129,8 @@ voices, images or clips. A Google account without a YouTube channel gets "Create
    once). This gives `openid`, `profile` and `w_member_social`.
 3. Auth → Authorized redirect URL: `${SITE_URL}/api/accounts/callback/linkedin`.
 
-Posts go to the member's own profile (videos and up to 20 images). Company pages need the Community Management API
+Posts go to the member's own profile (videos and up to 20 images; carousels go as multi-image posts). LinkedIn
+"document" posts (a PDF) are not published through the API here: Content offers the carousel as one PDF to post by hand. Company pages need the Community Management API
 (`w_organization_social`), a reviewed product that is not implemented here.
 
 Tokens last 60 days. Refresh tokens are only issued to approved partner apps: when one is present it is used,
@@ -142,7 +149,7 @@ never stops the others. An expired or revoked token marks the account `expired`,
 | --- | --- | --- | --- |
 | YouTube | `GET /youtube/v3/videos?part=statistics&id=…` (50 IDs a call, 1 quota unit) | views, likes, comments (no shares) | `youtube.readonly` (already asked for) |
 | TikTok | `POST /v2/video/query/?fields=id,view_count,like_count,comment_count,share_count` (20 IDs a call) | views, likes, comments, shares | `video.list` (new) |
-| Instagram | `GET /v23.0/{media-id}?fields=like_count,comments_count` and `GET /v23.0/{media-id}/insights?metric=views,shares` | likes, comments; views and shares with insights | `instagram_business_manage_insights` (new) |
+| Instagram | `GET /v23.0/{media-id}?fields=like_count,comments_count` and `GET /v23.0/{media-id}/insights?metric=views,shares,saved` | likes, comments; views, shares and saves with insights | `instagram_business_manage_insights` (new) |
 | LinkedIn | none | — | Member post analytics (`r_member_postAnalytics`) is a restricted partner product: the page says "not shared" |
 
 - **New scopes mean existing connections must reconnect.** TikTok and Instagram connections made before this change

@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import { ApiError, errorText, newKey, post as send, put, useApi, useAuth, type Post, type Workspace } from "../lib";
 import { Modal, Spinner, useToast } from "../ui";
-import { platforms, postsAsPhotos, type PlatformId } from "../../shared/social";
+import { photosRefused, platforms, postsAsPhotos, type PlatformId } from "../../shared/social";
 import { validZone, zonedTime } from "../../shared/schedule";
 import { planById } from "../../shared/plans";
 import { formats } from "../../shared/formats";
@@ -166,6 +166,8 @@ const span = (s: number) => (s % 60 === 0 ? `${s / 60} minute${s === 60 ? "" : "
 /** Why a post cannot go to a network as it is (mirrors server/social/post.ts `unfit`), or null. */
 export function unfitFor(post: Post, platform: PlatformId): string | null {
   const facts = platforms[platform];
+  const refused = photosRefused(post.format, platform);
+  if (refused) return refused;
   if (postsAsPhotos(post.format, platform)) return post.slides.length ? null : `This post has no slides to send to ${facts.name}.`;
   if (!post.videoAssetId) return `${facts.name} needs a video, and this post has none yet.`;
   const d = Number(post.duration) || 0;
@@ -176,7 +178,8 @@ export function unfitFor(post: Post, platform: PlatformId): string | null {
 /** How the post goes out on a network, for the account list. */
 export function postsAs(post: Post, platform: PlatformId) {
   if (platform === "youtube") return "Posts as a Short";
-  return postsAsPhotos(post.format, platform) ? "Posts as a photo carousel" : "Posts as a video";
+  if (!postsAsPhotos(post.format, platform)) return "Posts as a video";
+  return platform === "tiktok" ? "Posts as a photo post" : platform === "linkedin" ? "Posts as a multi-image post" : "Posts as a carousel";
 }
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const HASHTAG = /^[\p{L}\p{N}_]{1,60}$/u;
@@ -210,7 +213,7 @@ export function ScheduleDialog(props: ScheduleDialogProps) {
 
 /** Free plan: an upgrade notice and the files to post by hand. */
 function UpgradeInstead({ post, close }: { post: Post; close: () => void }) {
-  const slides = post.format === "slideshow" ? post.slides : [];
+  const slides = post.format === "slideshow" || post.format === "carousel" ? post.slides : [];
   const download = (id: string) => `/api/media/${id}/file?download=1`;
   return (
     <Modal title="Schedule post" onClose={close} footer={<><span /><button type="button" className="btn" onClick={close}>Close</button></>}>
@@ -236,6 +239,9 @@ function UpgradeInstead({ post, close }: { post: Post; close: () => void }) {
                 <Download size={14} aria-hidden="true" /> Slide {i + 1}
               </a>
             ))}
+            {post.format === "carousel" && slides.length > 0 && (
+              <a className="btn sm" href={`/api/posts/${post.id}/pdf`} download><Download size={14} aria-hidden="true" /> All slides as PDF</a>
+            )}
             {!post.videoAssetId && !slides.length && <p className="muted small">This post has no files to download.</p>}
           </div>
         )}
@@ -276,7 +282,10 @@ function ScheduleSteps({ post: initial, workspace, close, onScheduled, at, accou
     for (const p of pubsQ.data?.publications || []) if (p.status === "scheduled" || p.status === "publishing" || p.status === "published") m.set(p.accountId, p.status);
     return m;
   }, [pubsQ.data]);
-  const accounts = useMemo(() => accountsQ.data?.accounts || [], [accountsQ.data]);
+  // A carousel is never offered to a network without photo posts (YouTube); a line says why it is missing.
+  const allAccounts = useMemo(() => accountsQ.data?.accounts || [], [accountsQ.data]);
+  const accounts = useMemo(() => allAccounts.filter((a) => !photosRefused(current.format, a.platform)), [allAccounts, current.format]);
+  const hidden = [...new Set(allAccounts.filter((a) => photosRefused(current.format, a.platform)).map((a) => platforms[a.platform].name))];
   const blocked = useCallback((a: SocialAccount): string | null => {
     if (a.status !== "active") return "The connection expired. Reconnect it in Accounts.";
     const live = taken.get(a.id);
@@ -429,7 +438,7 @@ function ScheduleSteps({ post: initial, workspace, close, onScheduled, at, accou
               <div className="notice bad" role="alert">{accountsQ.error} <button type="button" className="link" onClick={() => void accountsQ.reload()}>Try again</button></div>
             ) : !accounts.length ? (
               <div className="empty">
-                <p>No social accounts are connected to {workspace.name} yet.</p>
+                <p>{hidden.length ? `${hidden.join(" and ")} takes videos only, so a carousel can't go there. Connect Instagram, TikTok or LinkedIn to post it.` : `No social accounts are connected to ${workspace.name} yet.`}</p>
                 <Link to="/app/accounts" className="btn primary" onClick={close}><Plus size={16} aria-hidden="true" /> Connect an account</Link>
               </div>
             ) : (
@@ -454,6 +463,7 @@ function ScheduleSteps({ post: initial, workspace, close, onScheduled, at, accou
                 })}
               </div>
             )}
+            {!!accounts.length && hidden.length > 0 && <p className="hint">{hidden.join(" and ")} takes videos only, so a carousel goes to Instagram, TikTok and LinkedIn.</p>}
             {!!accounts.length && <p className="hint">Default accounts for auto-scheduling are chosen in <Link to="/app/accounts" onClick={close}>Accounts</Link>.</p>}
           </fieldset>
         )}

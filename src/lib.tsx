@@ -26,6 +26,8 @@ export type Post = {
   hook: string; caption: string; title: string; hashtags: string[]; topic: string; why: string; pattern: string | null;
   duration: number; videoAssetId: string | null; coverAssetId: string | null; slides: string[]; revision: number;
   createdAt: number; updatedAt: number; reviewedAt: number | null; spec?: Spec;
+  /** Carousels: the shape of their slides. */
+  aspect?: "4:5" | "1:1";
 };
 export type Asset = {
   id: string; kind: string; name: string; mime: string; bytes: number; duration: number; width: number; height: number;

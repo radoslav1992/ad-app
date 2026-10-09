@@ -91,6 +91,8 @@ def setUpModule():
     make('photo.webp', '-f','lavfi','-i','color=c=yellow:s=320x240','-frames:v','1')
     make('huge.png', '-f','lavfi','-i','color=c=white:s=5000x16','-frames:v','1')
     make('anim.gif', '-f','lavfi','-i','testsrc=s=64x64:r=5:d=0.4')
+    # A logo: a red block in the middle of a clear (transparent) picture.
+    make('logo.png', '-f','lavfi','-i','color=c=red:s=100x50','-vf','format=rgba,pad=200:100:50:25:color=black@0','-frames:v','1')
     # Videos: red 640x360 with sound, blue 640x360 without, a green screen with a moving test box and sound.
     make('clip.mp4', '-f','lavfi','-i','color=c=red:s=640x360:r=30:d=2','-f','lavfi','-i','sine=frequency=440:duration=2',
          '-c:v','libx264','-threads','1','-pix_fmt','yuv420p','-c:a','aac','-shortest')
@@ -932,5 +934,74 @@ class TransitionTest(RendererTest):
         self.assert_fails(change(1, loop='yes'), 'MEDIA_INVALID')
         clip = {'kind': 'video', 'input': 0, 'duration': 1, 'loop': True, 'keep': [[0, 1]]}
         self.assert_fails({**good, 'segments': [clip]}, 'MEDIA_INVALID')
+
+class CarouselStillsTest(RendererTest):
+    """Carousel slides (shared/carousel.ts): 4:5 and 1:1 frames, a picture cover-cropped into a rounded box on the page
+    colour, the words over it, and a logo fitted in its box over everything."""
+    def slide(self, **changes):
+        s = {'color': '#336699', 'input': 0, 'box': {'x': 100, 'y': 200, 'w': 880, 'h': 600, 'radius': 60},
+             'logo': {'input': 1, 'x': 90, 'y': 1200, 'w': 200, 'h': 100}, 'ass': ass(1080, 1350, (540, 100, 'Hi'))}
+        s.update(changes)
+        return s
+
+    def payload(self, **changes):
+        p = {'operation': 'stills', 'width': 1080, 'height': 1350, 'synthetic': False, 'urls': [FIXTURES.url('wide.png'), FIXTURES.url('logo.png')],
+             'slides': [self.slide()]}
+        p.update(changes)
+        return p
+
+    def test_a_picture_in_a_rounded_box_on_the_page_colour_with_words_and_a_logo(self):
+        job = run(self.payload(slides=[self.slide(), self.slide(box={'x': 0, 'y': 0, 'w': 1080, 'h': 1350, 'radius': 0}, logo=None, ass=''),
+                                       {'color': '#ffffff', 'ass': ass(1080, 1350, (540, 675, 'Hi'))}]))
+        self.assertEqual((job['status'], job['files']), ('completed', 3), job)
+        self.assert_outputs_only(job)
+        for path in job['outputs']: self.assert_jpeg(path, 1080, 1350, marked=False)
+        boxed, full, page = job['outputs']
+        # The wide red | blue picture is cover-cropped into the box, centred: red left of the box's middle, blue right.
+        self.assertTrue(near(pixel(boxed, None, 300, 500), (255, 0, 0), 40))
+        self.assertTrue(near(pixel(boxed, None, 800, 500), (0, 0, 255), 40))
+        # The page colour around the box and in its rounded-off corners; the box's edges between the corners are picture.
+        self.assertTrue(near(pixel(boxed, None, 50, 50), (0x33, 0x66, 0x99), 20))
+        self.assertTrue(near(pixel(boxed, None, 104, 204), (0x33, 0x66, 0x99), 20))
+        self.assertTrue(near(pixel(boxed, None, 975, 795), (0x33, 0x66, 0x99), 20))
+        self.assertTrue(near(pixel(boxed, None, 200, 203), (255, 0, 0), 40))
+        self.assertTrue(near(pixel(boxed, None, 100 + 880 - 3, 500), (0, 0, 255), 40))
+        # The words (a red box style) over the page, and the logo's red block in its box with the page around it.
+        self.assertGreater(share(boxed, None, (500, 70, 80, 60), (255, 0, 0)), 0.3)
+        self.assertTrue(near(pixel(boxed, None, 190, 1250), (255, 0, 0), 40))
+        self.assertTrue(near(pixel(boxed, None, 100, 1206), (0x33, 0x66, 0x99), 20))
+        # A full-bleed picture fills the slide; a page alone is its colour.
+        self.assertTrue(near(pixel(full, None, 100, 1300), (255, 0, 0), 40))
+        self.assertTrue(near(pixel(full, None, 1000, 50), (0, 0, 255), 40))
+        self.assertTrue(near(pixel(page, None, 20, 20), (255, 255, 255), 10))
+        square = run(self.payload(width=1080, height=1080, synthetic=True, slides=[self.slide(logo={'input': 1, 'x': 90, 'y': 950, 'w': 200, 'h': 100}, ass='')]))
+        self.assertEqual(square['status'], 'completed', square)
+        self.assert_jpeg(square['outputs'][0], 1080, 1080, marked=True)
+        self.assertTrue(near(pixel(square['outputs'][0], None, 190, 1000), (255, 0, 0), 40))
+
+    def test_round_corners_only_when_asked(self):
+        self.assertEqual(server.rounded_corners(880, 600, 0), '')
+        self.assertIn("geq=", server.rounded_corners(880, 600, 60))
+        self.assertIn('hypot(', server.rounded_corners(880, 600, 60))
+
+    def test_carousel_boxes_are_checked_before_any_download(self):
+        invalid = [
+            self.payload(slides=[self.slide(color=None)]),
+            self.payload(slides=[self.slide(input=None)]),
+            self.payload(slides=[self.slide(box={'x': 1000, 'y': 0, 'w': 200, 'h': 100, 'radius': 0})]),
+            self.payload(slides=[self.slide(box={'x': 0, 'y': 1300, 'w': 200, 'h': 100, 'radius': 0})]),
+            self.payload(slides=[self.slide(box={'x': 0, 'y': 0, 'w': 200, 'h': 100, 'radius': 51})]),
+            self.payload(slides=[self.slide(box={'x': '0', 'y': 0, 'w': 200, 'h': 100, 'radius': 0})]),
+            self.payload(slides=[self.slide(box={'x': 0, 'y': 0, 'w': 4, 'h': 100, 'radius': 0})]),
+            self.payload(slides=[self.slide(box=[0, 0, 200, 100])]),
+            self.payload(slides=[self.slide(logo={'input': 2, 'x': 0, 'y': 0, 'w': 100, 'h': 50})]),
+            self.payload(slides=[self.slide(logo={'input': 1, 'x': 1000, 'y': 0, 'w': 100, 'h': 50})]),
+            self.payload(slides=[self.slide(logo={'x': 0, 'y': 0, 'w': 100, 'h': 50})]),
+            self.payload(width=1080, height=1349),
+            self.payload(width=1350, height=1080),
+        ]
+        for payload in invalid: self.assert_fails(payload, 'MEDIA_INVALID')
+        # A logo that is not a picture is named after the download.
+        self.assert_fails(self.payload(urls=[FIXTURES.url('wide.png'), FIXTURES.url('clip.mp4')]), 'MEDIA_FORMAT', network=True)
 
 if __name__ == '__main__': unittest.main()

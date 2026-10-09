@@ -12,7 +12,7 @@ import { falResult, falStatus, submitFal, type FalTicket } from "./providers/fal
 import { forcedAlignment, speak } from "./providers/elevenlabs";
 import { avatarVideoStatus, deleteAvatarVideo, submitAvatarVideo, type HeyGenTicket } from "./providers/heygen";
 import { releaseRender, renderFailures, renderFile, renderStatus, submitRender } from "./renderer";
-import { planRender, type Media, type PlanContext } from "./render-plan";
+import { planCarousel, planRender, type Media, type Plan, type PlanContext, type StillsPlan } from "./render-plan";
 import { failAsset } from "./media";
 import { claimSpeech, mayHaveSpeech, storedTranscript, transcribe } from "./speech";
 import { SPEECH_MAX_SECONDS } from "../shared/speech";
@@ -30,7 +30,8 @@ import type { RenderPayload, RenderStatus } from "../shared/render";
 import { IMAGE_CREDITS } from "../shared/credits";
 
 // A run makes a post ready: AI images/clips it asks for, the talking creator (voice, then lip-synced video), where a
-// clip's speaker is, then the render (video, cover and, for slideshows, the slides as pictures). A run of kind
+// clip's speaker is, then the render (video, cover and, for slideshows, the slides as pictures; a carousel is only
+// its slides, the first one being the cover). A run of kind
 // "speech" transcribes a long video for credits. Paid provider calls are made once: a claim is stored before each
 // call and its ticket right after, so a retried step polls the existing job instead of paying again; a claim without
 // a ticket (the answer was lost) fails the run and refunds the credits.
@@ -130,17 +131,19 @@ type RunInfo = { id: string; user_id: string; post_id: string | null; kind: stri
 
 /**
  * One AI image or clip, paid once; returns the stored asset's ID. A clip `from` a picture gets that picture's
- * capability link (read when it is submitted) and is `seconds` long.
+ * capability link (read when it is submitted) and is `seconds` long; an image has an `aspect`, and keeps the
+ * character of a `reference` picture (its capability link, read when it is submitted).
  */
-async function generateMedia(e: Env, step: WorkflowStep, run: RunInfo, name: string, kind: "image" | "clip", prompt: string, owner: { workspaceId: string | null; postId: string | null; assetKind: "ai_image" | "ai_clip" | "portrait"; label: string }, phase: Phase, clip: { from?: () => Promise<string>; seconds?: number } = {}) {
+async function generateMedia(e: Env, step: WorkflowStep, run: RunInfo, name: string, kind: "image" | "clip", prompt: string, owner: { workspaceId: string | null; postId: string | null; assetKind: "ai_image" | "ai_clip" | "portrait"; label: string }, phase: Phase, clip: { from?: () => Promise<string>; seconds?: number; aspect?: PendingMedia["aspect"]; reference?: () => Promise<string> } = {}) {
   const ticket = await step.do(`${name}-submit`, once, async () => {
     const s = await readState(e, run.id);
     if (s.tickets?.[name]) return s.tickets[name] as FalTicket;
     if (s.claims?.[name]) throw new Error("GENERATION_UNCERTAIN");
     const image = clip.from ? await clip.from() : undefined;
+    const reference = clip.reference ? await clip.reference() : undefined;
     await patchState(e, run.id, (s) => { (s.claims ||= {})[name] = true; });
     await phase(kind === "clip" ? "clip" : "images");
-    const t = await submitFal(e, kind, prompt, { image, seconds: clip.seconds });
+    const t = await submitFal(e, kind, prompt, { image, seconds: clip.seconds, aspect: clip.aspect, reference });
     await patchState(e, run.id, (s) => { (s.tickets ||= {})[name] = t; });
     return t;
   });
@@ -200,7 +203,10 @@ async function makePost(e: Env, step: WorkflowStep, run: RunInfo, phase: Phase) 
     const m = pending[i];
     const assetId = await generateMedia(e, step, run, `ai-${i}`, m.kind, m.prompt, {
       workspaceId: workspace.id, postId, assetKind: m.kind === "clip" ? "ai_clip" : "ai_image", label: `AI ${m.kind}: ${m.prompt}`,
-    }, phase, { seconds: m.seconds, from: m.from ? () => sourcePicture(e, run, postId, m) : undefined });
+    }, phase, {
+      seconds: m.seconds, aspect: m.aspect, from: m.from ? () => sourcePicture(e, run, postId, m) : undefined,
+      reference: m.reference ? () => ownImage(e, run, m.reference!) : undefined,
+    });
     await step.do(`ai-${i}-apply`, async () => updateSpec(e, postId, (spec) => {
       let target = spec;
       for (const part of m.path) target = target[part];
@@ -218,7 +224,8 @@ async function makePost(e: Env, step: WorkflowStep, run: RunInfo, phase: Phase) 
   const { spec } = await step.do("spec-final", () => loadSpec(e, postId));
   // With AI B-roll the voice is its own track under the cut-aways (server/broll.ts).
   const ctx = await step.do("resolve", async () => withBrollVoice(e, run.user_id, spec, await resolveContext(e, run.user_id, spec, workspace)));
-  const plan = planRender(spec, ctx);
+  // A carousel is only pictures (its stills); everything else is a video, and slideshows have stills too.
+  const plan: { compose: Plan["compose"] | null; stills: StillsPlan | null } = spec.format === "carousel" ? { compose: null, stills: planCarousel(spec, ctx) } : planRender(spec, ctx);
   const outputs: Record<string, RenderStatus> = {};
   for (const job of ["compose", "stills"] as const) {
     const part = job === "compose" ? plan.compose : plan.stills;
@@ -233,17 +240,18 @@ async function makePost(e: Env, step: WorkflowStep, run: RunInfo, phase: Phase) 
     const store = async (name: string, job: "compose" | "stills", n: number, mime: string, kind: "render" | "slide", label: string, duration = 0) => {
       if (saved[name] && await e.DB.prepare("SELECT 1 FROM media_assets WHERE id=?").bind(saved[name]).first()) return saved[name];
       const assetId = uid(), key = mediaKey(run.user_id, assetId, extOf(mime));
+      const part = job === "compose" ? plan.compose! : plan.stills!;
       const bytes = await storeStream(e, key, await renderFile(e, s.slots![job], s.jobs![job], n), mime === "video/mp4" ? 400 * MB : 20 * MB, mime);
       await e.DB.prepare(
-        "INSERT INTO media_assets(id,user_id,workspace_id,post_id,kind,name,object_key,mime,bytes,duration,width,height,status,meta,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,1080,1920,'ready',?,?,?)",
-      ).bind(assetId, run.user_id, workspace.id, postId, kind, label, key, mime, bytes, duration, (job === "compose" ? plan.compose.synthetic : !!plan.stills?.synthetic) ? '{"ai":true}' : "{}", now(), now()).run();
+        "INSERT INTO media_assets(id,user_id,workspace_id,post_id,kind,name,object_key,mime,bytes,duration,width,height,status,meta,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'ready',?,?,?)",
+      ).bind(assetId, run.user_id, workspace.id, postId, kind, label, key, mime, bytes, duration, part.width, part.height, part.synthetic ? '{"ai":true}' : "{}", now(), now()).run();
       await patchState(e, run.id, (st) => { (st.assets ||= {})[name] = assetId; });
       saved[name] = assetId;
       return assetId;
     };
-    const duration = outputs.compose.duration || 0;
-    const video = await store("video", "compose", 0, "video/mp4", "render", "Post video", duration);
-    const cover = (outputs.compose.files || 1) > 1 ? await store("cover", "compose", 1, "image/jpeg", "slide", "Post cover") : null;
+    const duration = outputs.compose?.duration || 0;
+    const video = outputs.compose ? await store("video", "compose", 0, "video/mp4", "render", "Post video", duration) : null;
+    const cover = outputs.compose && (outputs.compose.files || 1) > 1 ? await store("cover", "compose", 1, "image/jpeg", "slide", "Post cover") : null;
     const slides: string[] = [];
     if (outputs.stills) for (let n = 0; n < (outputs.stills.files || 0); n++) slides.push(await store(`slide-${n}`, "stills", n, "image/jpeg", "slide", `Slide ${n + 1}`));
     // Files of earlier versions of this post that the new one no longer uses are deleted (R2 cleanup follows).
@@ -252,8 +260,9 @@ async function makePost(e: Env, step: WorkflowStep, run: RunInfo, phase: Phase) 
     const owned = (await e.DB.prepare("SELECT id FROM media_assets WHERE post_id=?").bind(postId).all<{ id: string }>()).results;
     const stale = owned.map((r) => r.id).filter((x) => !keep.has(x));
     await e.DB.batch([
+      // A carousel's cover is its first slide.
       e.DB.prepare("UPDATE posts SET video_asset=?,cover_asset=?,slides=?,duration=?,render_status='ready',render_error=NULL,updated_at=? WHERE id=?")
-        .bind(video, cover, JSON.stringify(slides), duration, now(), postId),
+        .bind(video, cover ?? (plan.compose ? null : slides[0] ?? null), JSON.stringify(slides), duration, now(), postId),
       ...stale.map((x) => e.DB.prepare("DELETE FROM media_assets WHERE id=?").bind(x)),
     ]);
   });
@@ -323,6 +332,12 @@ async function makeRecording(e: Env, step: WorkflowStep, run: RunInfo, t: { char
   }));
 }
 
+/** The capability link of one of the owner's ready images (a reference character for AI pictures). */
+async function ownImage(e: Env, run: RunInfo, assetId: string) {
+  const a = await e.DB.prepare("SELECT object_key FROM media_assets WHERE id=? AND user_id=? AND status='ready' AND mime LIKE 'image/%'").bind(assetId, run.user_id).first<{ object_key: string }>();
+  if (!a) throw new Error("MEDIA_INPUT");
+  return inputUrl(e, run.id, a.object_key);
+}
 /** The capability link of the picture a clip is made from: the asset in field `from` next to where the clip goes. */
 async function sourcePicture(e: Env, run: RunInfo, postId: string, m: PendingMedia) {
   const row = await e.DB.prepare("SELECT spec FROM posts WHERE id=?").bind(postId).first<{ spec: string }>();
@@ -409,10 +424,10 @@ async function resolveContext(e: Env, userId: string, spec: Spec, workspace: any
   const assets = referencedAssets(spec);
   // Own videos bring the words heard in them (subtitles, captions and cuts).
   if (assets.length)
-    for (const a of (await e.DB.prepare(`SELECT id,object_key,mime,duration,kind,meta FROM media_assets WHERE user_id=? AND status='ready' AND id IN (${assets.map(() => "?").join(",")})`)
+    for (const a of (await e.DB.prepare(`SELECT id,object_key,mime,duration,width,height,kind,meta FROM media_assets WHERE user_id=? AND status='ready' AND id IN (${assets.map(() => "?").join(",")})`)
       .bind(userId, ...assets).all<any>()).results)
       media[a.id] = {
-        key: a.object_key, kind: a.mime.split("/")[0], duration: a.duration, ai: ["ai_image", "ai_clip", "avatar", "portrait"].includes(a.kind),
+        key: a.object_key, kind: a.mime.split("/")[0], duration: a.duration, width: a.width, height: a.height, ai: ["ai_image", "ai_clip", "avatar", "portrait"].includes(a.kind),
         ...(a.mime.startsWith("video/") && { words: storedTranscript(a.meta)?.words }),
       };
   const items = referencedLibrary(spec);

@@ -1,4 +1,4 @@
-import { AVATAR_STEP, CLIP_CREDITS, CLIP_SECONDS, IMAGE_CREDITS, SPEECH_CREDIT_SECONDS, VOICE_CHARS, avatarRates } from "./credits";
+import { AVATAR_STEP, CLIP_CREDITS, CLIP_SECONDS, IMAGE_CREDITS, REFERENCE_IMAGE_CREDITS, SPEECH_CREDIT_SECONDS, VOICE_CHARS, avatarRates } from "./credits";
 
 // Plans: the source of truth for prices and limits. The server enforces `posts` and `credits` per usage window
 // (D1 triggers), and `workspaces`, `accounts`, `scheduling`, `storageGb` and the video upload limits (`videoMinutes`,
@@ -75,7 +75,7 @@ export const planById = (id: string | undefined): Plan => plans.find((p) => p.id
 
 /** In every plan. */
 export const planIncludes = [
-  "Every format: slideshows, wall of text, hook & demo, green screen memes, AI UGC, narrated videos and clips from long videos",
+  "Every format: slideshows, carousels, wall of text, hook & demo, green screen memes, AI UGC, narrated videos and clips from long videos",
   "Brand profile from your website",
   "Captions, music and your brand colours",
   "Commercial use of everything you make",
@@ -85,6 +85,7 @@ export const planIncludes = [
 export const tariffs: readonly { name: string; text: string }[] = [
   { name: "Rendered post", text: "No credits — counts as one post of your plan." },
   { name: "AI image", text: `${IMAGE_CREDITS} credit per image (slide, background, scene of a narrated video or character portrait).` },
+  { name: "AI image with your character", text: `${REFERENCE_IMAGE_CREDITS} credits per image that keeps your own character or mascot (a carousel's brand kit).` },
   { name: "AI video clip", text: `${CLIP_CREDITS} credits per ${CLIP_SECONDS} seconds of clip (a moving background, B-roll, or a narrated video's scene brought to life from its picture).` },
   { name: "AI voice", text: `1 credit per started ${VOICE_CHARS} characters (a talking creator's or a narrated video's voiceover). Your own voiceover is free.` },
   {

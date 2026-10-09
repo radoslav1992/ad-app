@@ -195,9 +195,9 @@ describe("stats parsers", () => {
         { name: "views", period: "lifetime", values: [{ value: 4321 }], title: "Views", id: "1/insights/views/lifetime" },
         { name: "shares", period: "lifetime", values: [{ value: 12 }], title: "Shares", id: "1/insights/shares/lifetime" },
       ],
-    })).toEqual({ views: 4321, shares: 12 });
-    expect(instagramInsights({ data: [{ name: "views", total_value: { value: 9 } }] })).toEqual({ views: 9, shares: null });
-    expect(instagramInsights({})).toEqual({ views: null, shares: null });
+    })).toEqual({ views: 4321, shares: 12, saves: null });
+    expect(instagramInsights({ data: [{ name: "views", total_value: { value: 9 } }] })).toEqual({ views: 9, shares: null, saves: null });
+    expect(instagramInsights({})).toEqual({ views: null, shares: null, saves: null });
   });
 });
 
@@ -252,12 +252,12 @@ describe("reading stats from the networks", () => {
     ]);
     const found = await socialPlatforms.instagram.stats!({} as any, tokens(), ["111", "222", "333", "not-a-media-id"]);
     expect(Object.fromEntries(found)).toEqual({
-      "111": { views: 900, likes: 1, comments: 1, shares: 4 },
+      "111": { views: 900, likes: 1, comments: 1, shares: 4, saves: null },
       // An older connection without insights: likes and comments still count; reconnect for the rest.
       "222": { views: null, likes: 2, comments: 1, shares: null, limited: true },
     });
     expect(calls.find((c) => c.url.pathname === "/v23.0/111")!.url.searchParams.get("fields")).toBe("like_count,comments_count");
-    expect(calls.find((c) => c.url.pathname === "/v23.0/111/insights")!.url.searchParams.get("metric")).toBe("views,shares");
+    expect(calls.find((c) => c.url.pathname === "/v23.0/111/insights")!.url.searchParams.get("metric")).toBe("views,shares,saved");
     // A connection known to lack the insights permission isn't asked for insights at all.
     const before = calls.length;
     const limited = await socialPlatforms.instagram.stats!({} as any, tokens({ scope: "instagram_business_basic,instagram_business_content_publish" }), ["111"]);
@@ -725,7 +725,7 @@ describe("the analytics API", () => {
     const a = r.data;
     expect(a.days).toBe(30);
     expect(a.totals).toEqual({
-      posts: 4, withStats: 3, views: 4000, likes: 280, comments: 28, shares: 10, clicks: 14, conversions: 4,
+      posts: 4, withStats: 3, views: 4000, likes: 280, comments: 28, shares: 10, saves: null, clicks: 14, conversions: 4,
       revenue: [{ currency: "USD", amount: 64.9 }, { currency: "EUR", amount: 20 }],
     });
     expect(a.lastUpdated).toBe(t - HOUR);
@@ -734,7 +734,7 @@ describe("the analytics API", () => {
     expect(Object.keys(net)).toEqual(["tiktok", "instagram", "youtube", "linkedin"]);
     expect(net.youtube).toMatchObject({ posts: 1, withStats: 1, views: 1000, clicks: 7, conversions: 2, revenue: [{ currency: "USD", amount: 49.9 }, { currency: "EUR", amount: 20 }], statsAvailable: true, notes: [] });
     expect(net.tiktok).toMatchObject({ views: 3000, shares: 10, clicks: 7, conversions: 1, revenue: [{ currency: "USD", amount: 10 }] });
-    expect(net.instagram).toMatchObject({ views: null, likes: 30, notes: [{ tone: "warn", text: "Reconnect Instagram to allow views and shares.", action: "reconnect" }] });
+    expect(net.instagram).toMatchObject({ views: null, likes: 30, notes: [{ tone: "warn", text: "Reconnect Instagram to allow views, shares and saves.", action: "reconnect" }] });
     expect(net.linkedin).toMatchObject({ posts: 1, withStats: 0, views: null, statsAvailable: false });
     expect(net.linkedin.notes.map((n: any) => n.text)).toEqual([
       "LinkedIn doesn't share post stats with apps like this one, so only clicks and sales show here.",
@@ -757,7 +757,7 @@ describe("the analytics API", () => {
     expect(a.daily).toHaveLength(7);
     const empty = await setup();
     const e = (await call(worker, empty.env, "GET", `/api/workspaces/${empty.workspace}/analytics`, undefined, empty.user.cookie)).data;
-    expect(e.totals).toEqual({ posts: 0, withStats: 0, views: null, likes: null, comments: null, shares: null, clicks: 0, conversions: 0, revenue: [] });
+    expect(e.totals).toEqual({ posts: 0, withStats: 0, views: null, likes: null, comments: null, shares: null, saves: null, clicks: 0, conversions: 0, revenue: [] });
     expect(e).toMatchObject({ networks: [], top: [], lastUpdated: null });
     expect((await call(worker, s.env, "GET", `/api/workspaces/${s.workspace}/analytics`, undefined, signedIn(s.sqlite).cookie)).status).toBe(404);
     expect((await call(worker, s.env, "GET", `/api/workspaces/${s.workspace}/analytics`)).status).toBe(401);

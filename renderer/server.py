@@ -6,7 +6,7 @@ The payloads and the HTTP API are described in shared/render.ts:
   GET    /jobs/:id/file/:n  -> the n-th output file (video/mp4 or image/jpeg)
   DELETE /jobs/:id          -> forgets the job (stops it if running)
 Operations: 'compose' (segments + voice + music + burned ASS -> MP4, optional JPEG cover), 'stills' (one JPEG per
-slide), 'inspect' (what an uploaded file is) and 'track' (where the speaker is in a part of a video, for clips).
+slide; carousel slides place a picture in a rounded box on a page colour and a logo over it), 'inspect' (what an uploaded file is) and 'track' (where the speaker is in a part of a video, for clips).
 One job runs at a time; inputs are downloaded only from SOURCE_ORIGIN.
 """
 import bisect, json, math, os, re, shutil, struct, subprocess, tempfile, threading, time, urllib.error, urllib.request
@@ -32,7 +32,7 @@ MAX_DUCK_RANGES = 500
 FPS = 30
 RATE = 48000
 SAMPLES_PER_FRAME = RATE // FPS     # 1600: segment sound is cut on the same grid as its frames
-FRAME_SIZES = ((1080, 1920), (720, 1280))
+FRAME_SIZES = ((1080, 1920), (720, 1280), (1080, 1350), (1080, 1080))  # 9:16 video; 4:5 and 1:1 carousel slides
 FINISHED_TTL = 1800                 # seconds a finished job's files wait for the Worker
 DOWNLOAD_DEADLINE = 1200
 FADE_IN, FADE_OUT = 1.0, 1.5        # music fades (seconds)
@@ -176,6 +176,14 @@ def fit(graph, source, label, mode, width, height, blur):
     graph.append(f'[{label}b]scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1[{label}d]')
     graph.append(f'[{label}c][{label}d]overlay=(W-w)/2:(H-h)/2,format=yuv420p[{label}]')
     return f'[{label}]'
+
+def rounded_corners(width, height, radius):
+    """Clears the corners of a width x height picture outside quarter circles of `radius` (anti-aliased over one
+    pixel, as the browser's rounded rectangle clip), so the page shows through."""
+    if radius <= 0: return ''
+    r = radius
+    dx, dy = f'max(max({r}-X-0.5,X+0.5-{width - r}),0)', f'max(max({r}-Y-0.5,Y+0.5-{height - r}),0)'
+    return f",format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='255*clip({r}+0.5-hypot({dx},{dy}),0,1)'"
 
 def burn(ass_path):
     """The libass filter for captions and on-screen text, with the bundled fonts."""
@@ -454,6 +462,15 @@ def overlay_plan(o, count, width, total_frames):
             'width': int(round(number(o['width'], 0.2, 1) * width / 2)) * 2,
             'x': number(o['x'], 0, 1), 'y': number(o['y'], 0, 1), 'audio': option('audio', 0, 1, 0.0)}
 
+def rect(value, width, height, radius=False):
+    """A box inside the frame in whole pixels (carousel pictures and logos), at least 8 pixels a side."""
+    if not isinstance(value, dict): raise ValueError('Invalid box')
+    x, y = int(round(number(value['x'], 0, width - 8))), int(round(number(value['y'], 0, height - 8)))
+    w, h = int(round(number(value['w'], 8, width - x))), int(round(number(value['h'], 8, height - y)))
+    box = {'x': x, 'y': y, 'w': w, 'h': h}
+    if radius: box['radius'] = int(round(number(value.get('radius', 0), 0, min(w, h) / 2)))
+    return box
+
 def stills_plan(payload, origin):
     """Validates a stills payload completely, before anything is downloaded."""
     width, height = frame_size(payload)
@@ -463,11 +480,16 @@ def stills_plan(payload, origin):
     plan = []
     for s in slides:
         if not isinstance(s, dict): raise ValueError('Invalid slide')
-        if (s.get('input') is None) == (s.get('color') is None): raise ValueError('Invalid slide: needs an input or a color')
+        if s.get('box') is None:
+            if (s.get('input') is None) == (s.get('color') is None): raise ValueError('Invalid slide: needs an input or a color')
+        elif s.get('input') is None or s.get('color') is None: raise ValueError('Invalid slide: a box needs an input and a color')
+        logo = s.get('logo')
         plan.append({'ass': text(s['ass']), 'input': None if s.get('input') is None else index(s['input'], len(urls)),
-                     'color': None if s.get('color') is None else color(s['color'])})
-    return {'width': width, 'height': height, 'urls': urls, 'slides': plan, 'synthetic': synthetic(payload),
-            'used': {s['input'] for s in plan if s['input'] is not None}}
+                     'color': None if s.get('color') is None else color(s['color']),
+                     'box': None if s.get('box') is None else rect(s['box'], width, height, radius=True),
+                     'logo': None if logo is None else {**rect(logo, width, height), 'input': index(logo['input'], len(urls))}})
+    used = {s['input'] for s in plan if s['input'] is not None} | {s['logo']['input'] for s in plan if s['logo']}
+    return {'width': width, 'height': height, 'urls': urls, 'slides': plan, 'synthetic': synthetic(payload), 'used': used}
 
 def checked(build, *args):
     """Runs a payload check; a missing field or a value of the wrong shape is an invalid payload."""
@@ -641,7 +663,8 @@ def join_with_transitions(graph, segments, own_sound, total_samples):
     if not own_sound: graph.append(f'anullsrc=r={RATE}:cl=stereo,atrim=end_sample={total_samples}[acat]')
 
 def stills(job, payload, origin):
-    """One JPEG per slide: the picture cover-cropped to the frame (or a solid colour), its ASS burned in."""
+    """One JPEG per slide: the picture cover-cropped to the frame (or a solid colour; or, with a box, the picture
+    cover-cropped into the box on the colour), its ASS burned in, then the logo fitted inside its box."""
     plan = checked(stills_plan, payload, origin)
     width, height = plan['width'], plan['height']
     files = fetch(job, plan['urls'], plan['used'])
@@ -650,14 +673,25 @@ def stills(job, payload, origin):
     for n, slide in enumerate(plan['slides']):
         ass = write_ass(job, f'slide{n}.ass', slide['ass'])
         captions = f',{burn(ass)}' if ass else ''
-        if slide['color']:
-            source, graph = [], f'color=c=0x{slide["color"]}:s={width}x{height}:r=1:d=1,setsar=1{captions}[v]'
-        else:
-            if media[slide['input']]['kind'] != 'image': raise ValueError('Unsupported image input')
-            source, graph = ['-threads','1','-i',files[slide['input']]], f'[0:v:0]{cover_filter(width, height)}{captions}[v]'
+        source = []
+        def picture(i):
+            if media[i]['kind'] != 'image': raise ValueError('Unsupported image input')
+            source.extend(['-threads', '1', '-i', files[i]])
+            return f'[{len(source) // 4 - 1}:v:0]'
+        page = f'color=c=0x{slide["color"]}:s={width}x{height}:r=1:d=1,setsar=1'
+        if slide['box']:
+            b = slide['box']
+            graph = (f'{page}[bg];{picture(slide["input"])}{cover_filter(b["w"], b["h"])}{rounded_corners(b["w"], b["h"], b["radius"])}[pic];'
+                     f'[bg][pic]overlay=x={b["x"]}:y={b["y"]}{captions}')
+        elif slide['color']: graph = f'{page}{captions}'
+        else: graph = f'{picture(slide["input"])}{cover_filter(width, height)}{captions}'
+        if slide['logo']:
+            l = slide['logo']
+            graph += (f'[base];{picture(l["input"])}scale={l["w"]}:{l["h"]}:force_original_aspect_ratio=decrease,setsar=1,format=rgba[logo];'
+                      f'[base][logo]overlay=x={l["x"]}+({l["w"]}-overlay_w)/2:y={l["y"]}+({l["h"]}-overlay_h)/2')
         output = os.path.join(job['dir'], f'output{n}.jpg')
         command(['ffmpeg','-nostdin','-v','error','-filter_complex_threads','1','-protocol_whitelist','file,pipe',*source,
-                 '-filter_complex',graph,'-map','[v]','-frames:v','1','-q:v','3','-update','1',output], timeout=120)
+                 '-filter_complex',f'{graph}[v]','-map','[v]','-frames:v','1','-q:v','3','-update','1',output], timeout=120)
         if not os.path.exists(output) or not os.path.getsize(output): raise ValueError('Media processing failed: no still')
         if plan['synthetic']: mark_jpeg(output)
         outputs.append(output)

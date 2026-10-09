@@ -118,6 +118,12 @@ function FormatArt({ id }: { id: PostFormatId }) {
           <b>5 slides, one big idea</b>
         </>
       )}
+      {id === "carousel" && (
+        <>
+          <div className="page"><b>01</b><span>Price the outcome, not the hours</span><i /><i /><small>@yourbrand · 2/7</small></div>
+          <div className="dots"><i /><i /><i /><i /><i /></div>
+        </>
+      )}
       {id === "text" && <p>Nobody tells you this when you start: the first version is supposed to be a little embarrassing.</p>}
       {id === "hook_demo" && (
         <>
@@ -160,7 +166,7 @@ function FormatCards() {
   if (!list)
     return (
       <ul className="formats" aria-busy="true">
-        {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+        {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
           <li key={i} className="glass format-card skeleton" aria-hidden="true">
             <div className="fmt-art" />
             <div><span className="bar short-bar" /><span className="bar" /></div>
@@ -200,7 +206,7 @@ const faqs: { q: string; a: ReactNode }[] = [
     a: (
       <p>
         {PRODUCT.name} turns your website into a steady stream of short-form posts. It learns your product and audience, writes post ideas, and renders them
-        as slideshows, text videos, hook-and-demo videos, green screen memes, AI creator videos and narrated videos. You approve the ones you like and they publish on your
+        as slideshows, carousels, text videos, hook-and-demo videos, green screen memes, AI creator videos and narrated videos. You approve the ones you like and they publish on your
         schedule.
       </p>
     ),
@@ -323,7 +329,7 @@ export function Landing() {
       <section className="pub-section" id="features" aria-labelledby="formats-title" tabIndex={-1}>
         <div className="pub-wrap">
           <div className="pub-section-head center">
-            <span className="kicker">Seven formats</span>
+            <span className="kicker">Eight formats</span>
             <h2 className="title" id="formats-title">The formats that work on short-form, made for you</h2>
             <p className="sub">Mix them freely. Each post comes with its caption, hashtags and title for every network.</p>
           </div>

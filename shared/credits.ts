@@ -3,6 +3,11 @@
 
 /** One AI image (slide, background, character portrait). */
 export const IMAGE_CREDITS = 1;
+/**
+ * One AI image that keeps a reference character or mascot (a carousel's brand kit): an edit model that reads the
+ * reference picture, which costs the provider more.
+ */
+export const REFERENCE_IMAGE_CREDITS = 2;
 /** One AI video clip of CLIP_SECONDS (a moving background). */
 export const CLIP_CREDITS = 6;
 export const CLIP_SECONDS = 5;

@@ -19,6 +19,8 @@ export type Money = { currency: string; amount: number };
 export type Counts = {
   /** Lifetime counts from the networks; null when none of the posts has that number yet. */
   views: number | null; likes: number | null; comments: number | null; shares: number | null;
+  /** Saves: Instagram only (TikTok and YouTube don't report them). */
+  saves: number | null;
   clicks: number; conversions: number; revenue: Money[];
 };
 export type NetworkNote = { tone: "info" | "warn"; text: string; action?: "reconnect" };
@@ -54,6 +56,16 @@ export type SetupResponse = {
 };
 /** Per post: what the content cards and calendar show. */
 export type PostStatsResponse = { posts: Record<string, { views: number | null; clicks: number }> };
+
+/**
+ * Saves and shares per view. Creators' rules of thumb (not promises): posts saved by 7% or more of their viewers, or
+ * shared by 4% or more, tend to be pushed to many more people.
+ */
+export const RATE_HINTS = { saves: 0.07, shares: 0.04 } as const;
+export function rates(c: Pick<Counts, "views" | "saves" | "shares">) {
+  const of = (n: number | null) => (n !== null && c.views ? n / c.views : null);
+  return { saves: of(c.saves), shares: of(c.shares) };
+}
 
 /** UTC day number of a unix time (how clicks are counted). */
 export const dayOf = (unix: number) => Math.floor(unix / 86400);

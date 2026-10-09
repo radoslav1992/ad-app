@@ -12,6 +12,7 @@ import {
   referencedAssets, referencedLibrary, specCredits, specHook, specSchema, talking, visualPart, type Spec,
 } from "../shared/formats";
 import { storyScript, STORY_MAX_CHARS, STORY_MAX_SECONDS } from "../shared/story";
+import { jpegsToPdf } from "../shared/pdf";
 import type { AvatarKind } from "../shared/credits";
 
 // Posts: made from a spec by a run (AI media, voice, avatar video, render), then reviewed in Blitz.
@@ -30,9 +31,11 @@ export async function characterKind(env: Env, userId: string, spec: Spec): Promi
 export async function checkReferences(env: Env, userId: string, spec: Spec) {
   const assets = referencedAssets(spec);
   if (assets.length) {
-    const found = (await env.DB.prepare(`SELECT id FROM media_assets WHERE user_id=? AND status='ready' AND id IN (${assets.map(() => "?").join(",")})`)
-      .bind(userId, ...assets).all<{ id: string }>()).results;
+    const found = (await env.DB.prepare(`SELECT id,mime FROM media_assets WHERE user_id=? AND status='ready' AND id IN (${assets.map(() => "?").join(",")})`)
+      .bind(userId, ...assets).all<{ id: string; mime: string }>()).results;
     if (found.length !== assets.length) throw new HTTPException(400, { message: "A file in this post is missing or still uploading. Choose it again." });
+    // A carousel is pictures: its slides, logo and reference character are images.
+    if (spec.format === "carousel" && found.some((a) => !a.mime.startsWith("image/"))) throw new HTTPException(400, { message: "A carousel can only use pictures. Choose an image." });
   }
   const items = referencedLibrary(spec);
   if (items.length) {
@@ -126,6 +129,8 @@ export function postView(p: any, detail = false) {
     hashtags: spec.hashtags || [], topic: spec.topic || "", why: spec.why || "", pattern: spec.pattern || null,
     duration: p.duration, videoAssetId: p.video_asset, coverAssetId: p.cover_asset, slides: json<string[]>(p.slides, []),
     revision: p.revision, createdAt: p.created_at, updatedAt: p.updated_at, reviewedAt: p.reviewed_at,
+    // A carousel's slides are 4:5 or 1:1 (players show them at their shape).
+    ...(p.format === "carousel" && { aspect: spec.aspect === "1:1" ? "1:1" : "4:5" }),
     ...(detail && { spec }),
   };
 }
@@ -183,6 +188,25 @@ posts.get("/:id", async (c) => {
   const p = await ownedPost(c.env, c.get("user").id, c.req.param("id"));
   const run = await c.env.DB.prepare("SELECT phase,status,credits,error FROM runs WHERE post_id=? ORDER BY created_at DESC LIMIT 1").bind(p.id).first<any>();
   return c.json({ post: { ...postView({ ...p, phase: run?.status === "queued" || run?.status === "running" ? run.phase : null }, true) } });
+});
+/** A carousel's slides as one PDF, a page each (LinkedIn document posts). */
+posts.get("/:id/pdf", async (c) => {
+  const user = c.get("user");
+  const p = await ownedPost(c.env, user.id, c.req.param("id"));
+  const ids = json<string[]>(p.slides, []);
+  if (p.format !== "carousel" || p.render_status !== "ready" || !ids.length) throw new HTTPException(404, { message: "This post has no slides yet." });
+  const rows = (await c.env.DB.prepare(`SELECT id,object_key FROM media_assets WHERE user_id=? AND mime='image/jpeg' AND id IN (${ids.map(() => "?").join(",")})`)
+    .bind(user.id, ...ids).all<{ id: string; object_key: string }>()).results;
+  const pages: Uint8Array[] = [];
+  for (const id of ids) {
+    const key = rows.find((r) => r.id === id)?.object_key, object = key ? await c.env.MEDIA.get(key) : null;
+    if (!object) throw new HTTPException(404, { message: "A slide of this post is missing. Make it again." });
+    pages.push(new Uint8Array(await object.arrayBuffer()));
+  }
+  const name = (p.hook || "carousel").replace(/[^\w\- ]+/g, "").trim().slice(0, 60) || "carousel";
+  return new Response(jpegsToPdf(pages, p.hook || ""), {
+    headers: { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="${name}.pdf"`, "Cache-Control": "private, no-store" },
+  });
 });
 posts.put("/:id", async (c) => {
   const user = c.get("user");

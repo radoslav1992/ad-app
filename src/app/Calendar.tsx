@@ -518,7 +518,7 @@ function ApprovedTray({ workspace, known, version, onSchedule }: { workspace: Wo
                 const thumb = p.coverAssetId || p.slides[0];
                 return (
                   <li key={p.id} className="sc-tray-item">
-                    <span className="sc-thumb">{thumb ? <img src={fileUrl(thumb)} alt="" loading="lazy" /> : <Film size={18} aria-hidden="true" />}</span>
+                    <span className="sc-thumb">{thumb ? <img src={fileUrl(thumb)} alt="" loading="lazy" className={p.format === "carousel" ? "whole" : undefined} /> : <Film size={18} aria-hidden="true" />}</span>
                     <span className="grow">
                       <span className="sc-clamp-2">{p.hook || "Untitled post"}</span>
                       <span className="small muted">{formats[p.format]?.name || p.format}{p.renderStatus !== "ready" ? " · still being made" : ""}</span>

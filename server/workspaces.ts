@@ -11,6 +11,7 @@ import { canCreate, checkReferences, createPost } from "./posts";
 import { capabilities, conceptToSpec, feasible, formatPlan, loadCatalog, recentHooks, workspaceProfile, writeConcepts } from "./ideas";
 import { storyToSpec, writeStory } from "./story";
 import { storyStyleIds, type StoryStyle } from "../shared/story";
+import { defaultKit, type CarouselKit } from "../shared/carousel";
 import { formatIds, type FormatId, type Spec } from "../shared/formats";
 import { profileSchema } from "../shared/profile";
 import { settingsSchema, defaultSettings, validZone, type WorkspaceSettings } from "../shared/schedule";
@@ -32,9 +33,9 @@ export function workspaceSettings(w: { settings: string }): WorkspaceSettings {
   const parsed = settingsSchema.safeParse(json(w.settings, {}));
   return parsed.success ? parsed.data : defaultSettings();
 }
-async function ownedImage(env: Env, userId: string, id: string) {
+async function ownedImage(env: Env, userId: string, id: string, message = "Upload the logo as a JPG, PNG or WebP image.") {
   const a = await env.DB.prepare("SELECT id FROM media_assets WHERE id=? AND user_id=? AND status='ready' AND mime LIKE 'image/%'").bind(id, userId).first();
-  if (!a) throw new HTTPException(400, { message: "Upload the logo as a JPG, PNG or WebP image." });
+  if (!a) throw new HTTPException(400, { message });
 }
 
 workspaces.get("/", async (c) => {
@@ -87,6 +88,8 @@ workspaces.patch("/:id", async (c) => {
   // Partial updates are merged into the stored values and validated as a whole.
   const profile = d.profile ? profileSchema.parse({ ...workspaceProfile(w), ...d.profile }) : workspaceProfile(w);
   const settings = d.settings ? settingsSchema.parse({ ...workspaceSettings(w), ...d.settings }) : workspaceSettings(w);
+  // A saved carousel kit only points at the owner's own pictures.
+  for (const id of [settings.carousel?.logoId, settings.carousel?.referenceId]) if (id) await ownedImage(c.env, user.id, id, "Choose one of your own pictures for the carousel kit.");
   if (!validZone(settings.schedule.timezone)) throw new HTTPException(400, { message: "Choose a valid time zone." });
   // Default accounts are kept only while they are connected to this workspace (a stale ID is dropped, not refused).
   if (settings.schedule.accounts.length) {
@@ -135,7 +138,7 @@ workspaces.delete("/:id", async (c) => {
 
 const generateSchema = z.object({
   count: z.number().int().min(1).max(10).default(5),
-  formats: z.array(z.enum(formatIds)).min(1).max(6).optional(),
+  formats: z.array(z.enum(formatIds)).min(1).max(formatIds.length).optional(),
   mention: z.boolean().default(true),
   prompt: z.string().trim().max(400).optional(),
   style: z.enum(writingStyleIds as [string, ...string[]]).optional(),
@@ -153,6 +156,15 @@ const generateSchema = z.object({
   }).default({}),
 });
 type GenerateRequest = z.infer<typeof generateSchema>;
+/** The brand kit new carousels of a workspace start with; a logo or reference picture that is gone is left out. */
+export async function carouselKit(env: Env, userId: string, w: any): Promise<CarouselKit> {
+  const kit = defaultKit({ name: w.name, website: w.website, logoAssetId: w.logo_asset, profile: workspaceProfile(w), settings: workspaceSettings(w) });
+  for (const key of ["logoId", "referenceId"] as const) {
+    const id = kit[key];
+    if (id && !(await env.DB.prepare("SELECT 1 FROM media_assets WHERE id=? AND user_id=? AND status='ready' AND mime LIKE 'image/%'").bind(id, userId).first())) delete kit[key];
+  }
+  return kit;
+}
 /** Writes specs for a workspace (shared by drafts, Blitz batches and automations). */
 export async function writeSpecs(env: Env, user: DbUser, w: any, d: GenerateRequest) {
   const i = d.inputs;
@@ -174,6 +186,7 @@ export async function writeSpecs(env: Env, user: DbUser, w: any, d: GenerateRequ
   const request = {
     profile: workspaceProfile(w), plan: others, mention: d.mention, prompt: d.prompt, style: d.style as never, pattern: d.pattern,
     useCredits: d.useCredits, caps, recentHooks: await recentHooks(env, w.id), catalog,
+    ...(plan.includes("carousel") && { kit: await carouselKit(env, user.id, w) }),
   };
   const story = d.story;
   const [concepts, written] = await Promise.all([

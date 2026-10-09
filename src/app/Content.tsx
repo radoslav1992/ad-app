@@ -74,7 +74,7 @@ export function Content() {
           {posts.map((p) => (
             <button key={p.id} className="content-card" onClick={() => setOpen(p)}>
               <div className="thumb">
-                {p.renderStatus === "ready" && (p.coverAssetId || p.slides[0]) ? <img src={fileUrl(p.slides[0] || p.coverAssetId)} alt="" loading="lazy" />
+                {p.renderStatus === "ready" && (p.coverAssetId || p.slides[0]) ? <img src={fileUrl(p.slides[0] || p.coverAssetId)} alt="" loading="lazy" className={p.format === "carousel" ? "whole" : undefined} />
                   : <div className="thumb-state">{p.renderStatus === "failed" ? "Failed" : <><span className="spinner" /> {phaseLabels[p.phase || ""] || "Making…"}</>}</div>}
               </div>
               <div className="content-meta">
@@ -148,6 +148,16 @@ function PostDetail({ post: p, onClose, onChanged }: { post: Post; onClose: () =
             {p.format === "slideshow" && p.slides.map((s, i) => <a key={s} className="btn sm" href={`${fileUrl(s)}?download=1`}>Slide {i + 1}</a>)}
             <button className="btn danger" disabled={busy} onClick={() => { if (confirm("Delete this post and its files?")) void act(() => del(`/posts/${p.id}`), "Deleted.").then(onClose); }}><Trash2 size={16} /> Delete</button>
           </div>
+          {p.format === "carousel" && p.renderStatus === "ready" && p.slides.length > 0 && (
+            <div className="stack" style={{ gap: 8 }}>
+              <strong className="small">Download</strong>
+              <div className="row wrap" style={{ gap: 6 }}>
+                <a className="btn sm" href={`/api/posts/${p.id}/pdf`}><Download size={14} /> All slides as PDF</a>
+                {p.slides.map((s, i) => <a key={s} className="btn sm ghost" href={`${fileUrl(s)}?download=1`} aria-label={`Download slide ${i + 1}`}>{i + 1}</a>)}
+              </div>
+              <p className="muted small">The PDF is one document with a page per slide, for a LinkedIn document post. To add a trending sound on Instagram, post the slides from the Instagram app: its publishing API can't add music to carousels.</p>
+            </div>
+          )}
           {publications.length > 0 && (
             <div className="stack" style={{ gap: 8 }}>
               <strong className="small">Publishing</strong>

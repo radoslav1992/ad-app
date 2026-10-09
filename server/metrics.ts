@@ -5,7 +5,7 @@ import { statsPlatforms } from "../shared/analytics";
 import { socialPlatforms, SocialError, type PostStats } from "./social";
 import { freshTokens, markExpired, type AccountRow } from "./social/credentials";
 
-// Post stats from the networks (views, likes, comments, shares), read by the cron for posts published in the last
+// Post stats from the networks (views, likes, comments, shares; saves on Instagram), read by the cron for posts published in the last
 // 30 days: new posts every few hours in their first two days, then daily. Each run takes a bounded batch, grouped by
 // account (one token refresh and a few calls each), so it stays well inside the Workers subrequest limit.
 
@@ -92,8 +92,8 @@ async function refreshAccount(env: Env, accountId: string, rows: Due[]): Promise
     if (!s) return env.DB.prepare("UPDATE publications SET metrics_error='not_found' WHERE id=?").bind(r.id);
     // A number the network didn't send this time keeps its last value.
     return env.DB.prepare(
-      "UPDATE publications SET views=COALESCE(?,views),likes=COALESCE(?,likes),comments=COALESCE(?,comments),shares=COALESCE(?,shares),metrics_at=?,metrics_error=? WHERE id=?",
-    ).bind(s.views, s.likes, s.comments, s.shares, t, s.limited ? "scope" : null, r.id);
+      "UPDATE publications SET views=COALESCE(?,views),likes=COALESCE(?,likes),comments=COALESCE(?,comments),shares=COALESCE(?,shares),saves=COALESCE(?,saves),metrics_at=?,metrics_error=? WHERE id=?",
+    ).bind(s.views, s.likes, s.comments, s.shares, s.saves ?? null, t, s.limited ? "scope" : null, r.id);
   });
   await env.DB.batch(statements);
   return rows.filter((r) => found.has(r.external_id)).length;
