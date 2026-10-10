@@ -4,7 +4,8 @@ Short-form content on autopilot. Paste your website (or an App Store / Google Pl
 Shorts and LinkedIn posts made for your brand. Swipe to approve them in **Blitz**; they publish themselves on your schedule.
 
 The product name lives in one place (`shared/brand.ts`, plus `index.html` and `public/favicon.svg`). It runs at
-[hookstreak.com](https://hookstreak.com); `hookstreak.app` and the `www` hosts redirect there.
+[hookstreak.com](https://hookstreak.com); `www.hookstreak.com` redirects there. (`hookstreak.app` is Hookstreak Shorts,
+a separate app in the `faceless` repository.)
 
 Built on the same stack as [rech-bg](https://github.com/radoslav1992/rech-bg): Cloudflare Workers (Hono), D1, R2,
 Workflows, Containers (FFmpeg) and Workers AI, with Stripe billing. Much of rech-bg's code is reused here:
