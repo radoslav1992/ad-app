@@ -12,12 +12,11 @@
     "SITE_URL": "https://hookstreak.com",
     "CONTACT_EMAIL": "hello@hookstreak.com",
   },
-  // hookstreak.com is the public address; the others redirect there (canonicalUrl in server/config.ts).
+  // hookstreak.com is the public address; www redirects there (canonicalUrl in server/config.ts). hookstreak.app is
+  // Hookstreak Shorts, a separate Worker (radoslav1992/faceless).
   "routes": [
     { "pattern": "hookstreak.com", "custom_domain": true },
     { "pattern": "www.hookstreak.com", "custom_domain": true },
-    { "pattern": "hookstreak.app", "custom_domain": true },
-    { "pattern": "www.hookstreak.app", "custom_domain": true },
   ],
   "assets": {
     "directory": "./dist",
