@@ -9,7 +9,7 @@ Operations: 'compose' (segments + voice + music + burned ASS -> MP4, optional JP
 slide; carousel slides place a picture in a rounded box on a page colour and a logo over it), 'inspect' (what an uploaded file is) and 'track' (where the speaker is in a part of a video, for clips).
 One job runs at a time; inputs are downloaded only from SOURCE_ORIGIN.
 """
-import bisect, json, math, os, re, shutil, struct, subprocess, tempfile, threading, time, urllib.error, urllib.request
+import bisect, json, math, os, re, shutil, signal, struct, subprocess, tempfile, threading, time, urllib.error, urllib.request
 from http.client import HTTPException
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
@@ -1049,6 +1049,13 @@ class Handler(BaseHTTPRequestHandler):
                     except OSError: pass
         return self.respond(200, {})
 
+def stop(signum, frame):
+    """The platform stops an idle container with SIGTERM (the Worker's sleepAfter). As the container's first process
+    (PID 1) the server would ignore it, as Linux gives PID 1 no default action, and the container would keep running,
+    and be billed, until the next deploy. A job still running is dropped with it: nobody has asked for it for a minute."""
+    os._exit(0)
+
 if __name__ == '__main__':
     if not os.environ.get('SOURCE_ORIGIN'): log('SOURCE_ORIGIN is not set: every input download is refused')
-    ThreadingHTTPServer(('0.0.0.0', 8080), Handler).serve_forever()
+    signal.signal(signal.SIGTERM, stop)
+    ThreadingHTTPServer(('0.0.0.0', int(os.environ.get('PORT') or 8080)), Handler).serve_forever()

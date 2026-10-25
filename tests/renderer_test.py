@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
+import socket
 import struct
 import subprocess
 import sys
@@ -1003,5 +1005,31 @@ class CarouselStillsTest(RendererTest):
         for payload in invalid: self.assert_fails(payload, 'MEDIA_INVALID')
         # A logo that is not a picture is named after the download.
         self.assert_fails(self.payload(urls=[FIXTURES.url('wide.png'), FIXTURES.url('clip.mp4')]), 'MEDIA_FORMAT', network=True)
+
+def own_pid_namespace():
+    """Whether this machine lets the test start a process as PID 1 of its own namespace (as in the container)."""
+    if not shutil.which('unshare'): return False
+    return subprocess.run(['unshare', '--pid', '--fork', '--mount-proc', 'true'], capture_output=True).returncode == 0
+
+class StopTest(unittest.TestCase):
+    @unittest.skipUnless(own_pid_namespace(), 'needs unshare and the right to make a PID namespace (root)')
+    def test_exits_on_sigterm_as_the_containers_first_process(self):
+        # The Worker stops an idle container with SIGTERM; as PID 1, a server without a handler would ignore it and
+        # keep running (and being billed) until the next deploy.
+        with socket.socket() as s:
+            s.bind(('127.0.0.1', 0)); port = s.getsockname()[1]
+        proc = subprocess.Popen(['unshare', '--pid', '--fork', '--mount-proc', sys.executable, '-u', str(ROOT / 'renderer' / 'server.py')],
+                                env={**os.environ, 'PORT': str(port), 'SOURCE_ORIGIN': 'http://127.0.0.1:1'}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            for _ in range(100):
+                try:
+                    with socket.create_connection(('127.0.0.1', port), timeout=0.2): break
+                except OSError: time.sleep(0.05)
+            else: self.fail('the renderer did not start')
+            server_pid = next(int(c) for c in Path(f'/proc/{proc.pid}/task/{proc.pid}/children').read_text().split())
+            os.kill(server_pid, signal.SIGTERM)
+            self.assertEqual(proc.wait(timeout=5), 0)
+        finally:
+            if proc.poll() is None: proc.kill()
 
 if __name__ == '__main__': unittest.main()

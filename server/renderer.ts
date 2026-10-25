@@ -11,6 +11,22 @@ export class MediaRenderer extends Container<Env> {
     SOURCE_ORIGIN: this.env.SITE_URL ? new URL(this.env.SITE_URL).origin : "",
     PRODUCT_NAME: PRODUCT.name,
   };
+  /** Whether this idle container was already asked to stop. */
+  private stopping = false;
+  /**
+   * An idle container (no request for `sleepAfter`; jobs are polled every few seconds) is asked to stop (SIGTERM:
+   * renderer/server.py exits), and killed if it is still running at the next check: the library only ever asks, and a
+   * container that keeps running is billed for its memory the whole time.
+   */
+  override async onActivityExpired() {
+    if (!this.ctx.container?.running) return;
+    if (this.stopping) return this.destroy();
+    this.stopping = true;
+    await this.stop();
+  }
+  override onStart() {
+    this.stopping = false;
+  }
 }
 
 // Three renderer containers, each running one job at a time (busy: 429). A job starts on the one its ID hashes to
