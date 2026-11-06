@@ -12,12 +12,9 @@
     "SITE_URL": "https://hookstreak.com",
     "CONTACT_EMAIL": "hello@hookstreak.com",
   },
-  // hookstreak.com is the public address; www redirects there (canonicalUrl in server/config.ts). hookstreak.app is
-  // Hookstreak Shorts, a separate Worker (radoslav1992/faceless).
-  "routes": [
-    { "pattern": "hookstreak.com", "custom_domain": true },
-    { "pattern": "www.hookstreak.com", "custom_domain": true },
-  ],
+  // No public domain for now: hookstreak.com and www.hookstreak.com belong to Hookstreak Shorts (radoslav1992/faceless)
+  // which redirects them to hookstreak.app. Don't list them here: a deploy from Workers Builds would move them back.
+  // Before this app is used again, give it a domain of its own, in "routes" and SITE_URL.
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

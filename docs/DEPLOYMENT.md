@@ -67,12 +67,14 @@ Carousel pictures that keep a character use `fal-ai/nano-banana-pro/edit` (the s
   maintenance finds something overdue or failing, at most every 6 hours for the same state (docs/OPERATIONS.md
   section 2). Nothing to set up beyond `ADMIN_EMAILS` and email sending; check deliverability with the list in
   docs/OPERATIONS.md section 10.
-- **Domains:** `wrangler.jsonc` attaches `hookstreak.com` and `www.hookstreak.com` to the Worker as custom domains on
-  deploy (the zone must be on this Cloudflare account, with no other DNS records for those names). `hookstreak.app`
-  belongs to Hookstreak Shorts, another Worker: if it still shows under this Worker's Domains & Routes after a deploy,
-  remove it there. The Worker sends every host except `SITE_URL`'s to `SITE_URL` with
-  the same path (308); `*.workers.dev` keeps working. `SITE_URL` must be the public https origin: the renderer
-  only downloads from it, and OAuth redirects and provider input links are built from it.
+- **Domains:** none for now. `hookstreak.com`, `hookstreak.app` and their `www` names belong to Hookstreak Shorts,
+  another Worker. Don't put them back in `routes`: a deploy from Workers Builds runs without a terminal, so wrangler
+  moves a custom domain from another Worker without asking. A deploy with no custom domains in `routes` leaves the
+  Worker's domains as they are, so if one still shows under this Worker's Domains & Routes, remove it there. Before the
+  app is used again, add a domain of its own to `routes` as a custom domain (the zone must be on this Cloudflare
+  account) and set `SITE_URL`, `CONTACT_EMAIL` and the allowed sender to it. The Worker sends every host except
+  `SITE_URL`'s to `SITE_URL` with the same path (308); `*.workers.dev` keeps working. `SITE_URL` must be the public
+  https origin: the renderer only downloads from it, and OAuth redirects and provider input links are built from it.
 - **Turnstile:** create a widget for the domain and set `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`.
 
 ## 2. Variables and secrets
