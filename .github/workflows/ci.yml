@@ -21,8 +21,10 @@ jobs:
       - run: npm run ci
       - run: npx wrangler deploy --dry-run --no-autoconfig
   renderer:
-    # The renderer container (renderer/Dockerfile) runs Python 3.12 with ffmpeg and Noto fonts.
-    runs-on: ubuntu-latest
+    # The renderer container (renderer/Dockerfile) runs Python 3.12 with ffmpeg and Noto fonts. Ubuntu 24.04's FFmpeg
+    # (6.1) is close to the container's (Debian bookworm, 5.1); newer runner images bring FFmpeg 8, whose audio cuts
+    # differ (CutsTest) and which the renderer doesn't run on.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
